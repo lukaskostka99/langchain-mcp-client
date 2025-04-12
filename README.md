@@ -57,6 +57,7 @@ The server will start on port 8000 by default. In the Streamlit app, you can con
 ### LLM Providers
 - **OpenAI**: Requires an OpenAI API key and supports models like gpt-4o, gpt-4, and gpt-3.5-turbo
 - **Anthropic**: Requires an Anthropic API key and supports Claude models
+- **Google**: Requires a Google Generative Language / Vertex AI API
 
 ### MCP Server Connection
 - Currently supports SSE (Server-Sent Events) connections
