@@ -78,6 +78,13 @@ The server will start on port 8000 by default. In the Streamlit app, you can con
 - Tools are automatically available to the LLM agent in the chat interface
 - Tool executions and their results are tracked in the chat history
 
+## Future Improvements
+
+- **STDIO MCP Servers**: Support for connecting to MCP servers using standard input/output (STDIO) for more flexible server configurations.
+- **Test Tools Individually**: Implement functionality to test each tool individually from the UI to ensure they work as expected.
+- **Agent Memory**: Introduce memory capabilities for the agent to retain context across interactions.
+- **RAG (File Upload)**: Enable Retrieval-Augmented Generation (RAG) by allowing users to upload files that the agent can use to enhance its responses.
+
 ## Troubleshooting
 
 - **Connection Issues**: Ensure your MCP server is running and accessible

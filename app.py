@@ -15,6 +15,7 @@ nest_asyncio.apply()
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
 from langchain_core.tools import BaseTool
 from langchain_core.messages import HumanMessage
@@ -55,6 +56,14 @@ def create_llm_model(llm_provider: str, api_key: str, model_name: str):
             model=model_name,
             temperature=0.7,
         )
+    elif llm_provider == "Google":
+        return ChatGoogleGenerativeAI(
+            google_api_key=api_key,
+            model=model_name,
+            temperature=0,
+            max_tokens=None,
+            max_retries=2,
+        )
     else:
         raise ValueError(f"Unsupported LLM provider: {llm_provider}")
 
@@ -67,16 +76,35 @@ def on_shutdown():
         except Exception as e:
             print(f"Error during shutdown: {str(e)}")
 
+def reset_connection_state():
+    """Reset all connection-related session state variables."""
+    if st.session_state.client is not None:
+        try:
+            # Close the existing client properly
+            run_async(st.session_state.client.__aexit__(None, None, None))
+        except Exception as e:
+            print(f"Error closing previous client: {str(e)}")
+    
+    st.session_state.client = None
+    st.session_state.agent = None
+    st.session_state.tools = []
+
 def sidebar():
     # Sidebar for configuration
     with st.sidebar:
+        # Main app layout
+        st.title("LangChain MCP Client")
+        
+        st.divider()
+
         st.header("Configuration")
         
         # LLM Provider selection
         llm_provider = st.selectbox(
             "Select LLM Provider",
-            options=["OpenAI", "Anthropic"],
-            index=0
+            options=["OpenAI", "Anthropic", "Google"],
+            index=0,
+            on_change=reset_connection_state
         )
         
         # API Key input
@@ -90,14 +118,18 @@ def sidebar():
         if llm_provider == "OpenAI":
             model_options = ["gpt-4o", "gpt-4", "gpt-3.5-turbo"]
             default_model_idx = 0
-        else:  # Anthropic
+        elif llm_provider == "Anthropic":  # Anthropic
             model_options = ["claude-3-5-sonnet-20240620", "claude-3-opus-20240229", "claude-3-haiku-20240307"]
+            default_model_idx = 0
+        elif llm_provider == "Google":  # Google
+            model_options = ["gemini-2.0-flash-001", "gemini-2.5-pro-exp-03-25"]
             default_model_idx = 0
         
         model_name = st.selectbox(
             "Model",
             options=model_options,
-            index=default_model_idx
+            index=default_model_idx,
+            on_change=reset_connection_state
         )
         
         # MCP Server configuration
@@ -135,8 +167,8 @@ def sidebar():
                                     "transport": "sse",
                                     "url": server_url,
                                     "headers": None,
-                                    "timeout": 5,
-                                    "sse_read_timeout": 300
+                                    "timeout": 600,
+                                    "sse_read_timeout": 900
                                 }
                             }
                             
@@ -194,8 +226,8 @@ def sidebar():
                         "transport": "sse",
                         "url": server_url,
                         "headers": None,
-                        "timeout": 5,
-                        "sse_read_timeout": 300
+                        "timeout": 600,
+                        "sse_read_timeout": 900
                     }
                     st.success(f"Added server '{server_name}'")
             
@@ -379,12 +411,15 @@ def tab_chat():
                         
                         # Update tool execution display
                         display_tool_executions()
+
+                        st.rerun()
                     except Exception as e:
                         st.error(f"Error processing your request: {str(e)}")
                         st.code(traceback.format_exc(), language="python")
 
 
 def tab_about():
+    st.image("logo_transparent.png", width=200)
     st.markdown("""
     ### About
     This application demonstrates a Streamlit interface for LangChain MCP (Model Context Protocol) adapters. 
@@ -409,10 +444,12 @@ def main():
     # Set page configuration
     st.set_page_config(
         page_title="LangChain MCP Client",
-        page_icon="🧩",
+        page_icon="logo_transparent.png",
         layout="wide",
         initial_sidebar_state="expanded"
     )
+
+    st.logo("side_logo.png", size="large")
 
     # Session state initialization
     if "client" not in st.session_state:
@@ -434,9 +471,6 @@ def main():
         asyncio.set_event_loop(st.session_state.loop)
 
     atexit.register(on_shutdown)
-
-    # Main app layout
-    st.title("🧩 LangChain MCP Client")
 
     # Sidebar for configuration
     sidebar()
