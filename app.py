@@ -262,24 +262,40 @@ def sidebar():
                     st.write(f"**Description:** {selected_tool.description}")
                     
                     # Display parameters if available
-                    if hasattr(selected_tool, 'args_schema') and selected_tool.args_schema:
+                    if hasattr(selected_tool, 'args_schema'):
                         st.write("**Parameters:**")
-                        if hasattr(selected_tool.args_schema, 'schema'):
-                            try:
-                                schema_dict = selected_tool.args_schema.schema()
-                                if 'properties' in schema_dict:
-                                    properties = schema_dict.get('properties', {})
-                                    required_params = schema_dict.get('required', [])
-                                    
-                                    for param, details in properties.items():
-                                        param_type = details.get('type', 'string')
-                                        description = details.get('description', '')
-                                        is_required = param in required_params
-                                        
-                                        st.write(f"- **{param}**{' (required)' if is_required else ''} "
-                                            f"[{param_type}]: {description}")
-                            except Exception as e:
-                                st.error(f"Error parsing tool schema: {str(e)}")
+                        
+                        # Get schema properties directly from the tool
+                        schema = getattr(selected_tool, 'args_schema', {})
+                        if isinstance(schema, dict):
+                            properties = schema.get('properties', {})
+                            required = schema.get('required', [])
+                        else:
+                            # Handle Pydantic schema
+                            schema_dict = schema.schema()
+                            properties = schema_dict.get('properties', {})
+                            required = schema_dict.get('required', [])
+
+                        # Display each parameter with its details
+                        for param_name, param_info in properties.items():
+                            # Get parameter details
+                            param_type = param_info.get('type', 'string')
+                            param_title = param_info.get('title', param_name)
+                            param_default = param_info.get('default', None)
+                            is_required = param_name in required
+
+                            # Build parameter description
+                            param_desc = [
+                                f"{param_title}:",
+                                f"{param_type}",
+                                "(required)" if is_required else "(optional)"
+                            ]
+                            
+                            if param_default is not None:
+                                param_desc.append(f"[default: {param_default}]")
+
+                            # Display parameter info
+                            st.code(" ".join(param_desc))
 
 def tab_chat():
     # Main chat interface
@@ -377,6 +393,16 @@ def tab_about():
     For more information, check out:
     - [LangChain MCP Adapters](https://github.com/langchain-ai/langchain-mcp-adapters)
     - [Model Context Protocol](https://modelcontextprotocol.io/introduction)
+                
+    ### License
+    This project is licensed under the MIT License.
+    
+    ### Acknowledgements
+    - This application is built using [Streamlit](https://streamlit.io/) for the frontend.
+    
+    ### Developer
+    - [LinkedIn](https://www.linkedin.com/in/guinacio/)
+    - [Github](https://github.com/guinacio)
     """)
 
 def main():
