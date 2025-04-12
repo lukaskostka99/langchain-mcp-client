@@ -1,6 +1,6 @@
 # LangChain MCP Client Streamlit App
 
-This Streamlit application provides a user interface for connecting to LangChain MCP (Model Context Protocol) servers and interacting with them using different LLM providers (OpenAI, Anthropic, Google...).
+This Streamlit application provides a user interface for connecting to MCP (Model Context Protocol) servers and interacting with them using different LLM providers (OpenAI, Anthropic, Google...).
 
 ## Features
 
