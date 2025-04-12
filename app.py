@@ -2,11 +2,12 @@ import streamlit as st
 import asyncio
 import json
 import datetime
+import traceback
 from typing import Dict, List, Optional, Any
 import os
 import nest_asyncio
 
-# Apply nest_asyncio to allow nested event loops
+# Apply nest_asyncio to allow nested asyncio event loops (needed for Streamlit's execution model)
 nest_asyncio.apply()
 
 # Import langchain and related libraries
@@ -38,15 +39,21 @@ if "servers" not in st.session_state:
     st.session_state.servers = {}
 if "current_tab" not in st.session_state:
     st.session_state.current_tab = "Single Server"
+if "tool_executions" not in st.session_state:
+    st.session_state.tool_executions = []
+if "loop" not in st.session_state:
+    st.session_state.loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(st.session_state.loop)
 
 # Helper functions
+def run_async(coro):
+    """Run an async function within the stored event loop."""
+    return st.session_state.loop.run_until_complete(coro)
+
 async def setup_mcp_client(server_config: Dict[str, Dict]) -> MultiServerMCPClient:
     """Initialize a MultiServerMCPClient with the provided server configuration."""
     client = MultiServerMCPClient(server_config)
-    try:
-        return await client.__aenter__()
-    finally:
-        await client.__aexit__(None, None, None)
+    return await client.__aenter__()
 
 async def get_tools_from_client(client: MultiServerMCPClient) -> List[BaseTool]:
     """Get tools from the MCP client."""
@@ -55,6 +62,10 @@ async def get_tools_from_client(client: MultiServerMCPClient) -> List[BaseTool]:
 async def run_agent(agent, message: str) -> Dict:
     """Run the agent with the provided message."""
     return await agent.ainvoke({"messages": message})
+
+async def run_tool(tool, **kwargs):
+    """Run a tool with the provided parameters."""
+    return await tool.ainvoke(**kwargs)
 
 def create_llm_model(llm_provider: str, api_key: str, model_name: str):
     """Create a language model based on the selected provider."""
@@ -72,15 +83,6 @@ def create_llm_model(llm_provider: str, api_key: str, model_name: str):
         )
     else:
         raise ValueError(f"Unsupported LLM provider: {llm_provider}")
-
-def run_async(coroutine):
-    """Safely run an async coroutine in Streamlit."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(coroutine)
-    finally:
-        loop.close()
 
 # Main app layout
 st.title("🧩 LangChain MCP Client")
@@ -158,6 +160,13 @@ with st.sidebar:
                         }
                         
                         # Initialize the MCP client
+                        if st.session_state.client is not None:
+                            # First close the existing client properly
+                            try:
+                                run_async(st.session_state.client.__aexit__(None, None, None))
+                            except Exception as e:
+                                st.warning(f"Error closing previous client: {str(e)}")
+                        
                         st.session_state.client = run_async(setup_mcp_client(server_config))
                         
                         # Get tools from the client
@@ -172,6 +181,7 @@ with st.sidebar:
                         st.success(f"Connected to MCP server! Found {len(st.session_state.tools)} tools.")
                     except Exception as e:
                         st.error(f"Error connecting to MCP server: {str(e)}")
+                        st.code(traceback.format_exc(), language="python")
     
     else:  # Multiple Servers mode
         # Server management section
@@ -228,6 +238,13 @@ with st.sidebar:
                 with st.spinner("Connecting to MCP servers..."):
                     try:
                         # Initialize the MCP client with all servers
+                        if st.session_state.client is not None:
+                            # First close the existing client properly
+                            try:
+                                run_async(st.session_state.client.__aexit__(None, None, None))
+                            except Exception as e:
+                                st.warning(f"Error closing previous client: {str(e)}")
+                        
                         st.session_state.client = run_async(setup_mcp_client(st.session_state.servers))
                         
                         # Get tools from the client
@@ -242,6 +259,7 @@ with st.sidebar:
                         st.success(f"Connected to {len(st.session_state.servers)} MCP servers! Found {len(st.session_state.tools)} tools.")
                     except Exception as e:
                         st.error(f"Error connecting to MCP servers: {str(e)}")
+                        st.code(traceback.format_exc(), language="python")
     
     # Display available tools if connected
     if st.session_state.tools:
@@ -301,7 +319,15 @@ with st.sidebar:
                     with st.spinner(f"Running {selected_tool.name}..."):
                         try:
                             # Run the tool
-                            result = run_async(selected_tool.ainvoke(**param_values))
+                            result = run_async(run_tool(selected_tool, **param_values))
+                            
+                            # Record tool execution
+                            st.session_state.tool_executions.append({
+                                "tool_name": selected_tool.name,
+                                "input": param_values,
+                                "output": result,
+                                "timestamp": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            })
                             
                             # Display result
                             st.success("Tool executed successfully!")
@@ -309,6 +335,7 @@ with st.sidebar:
                             st.code(result)
                         except Exception as e:
                             st.error(f"Error executing tool: {str(e)}")
+                            st.code(traceback.format_exc(), language="python")
         
         # Tool details in expanders
         st.subheader("Tool Details")
@@ -323,10 +350,6 @@ with st.sidebar:
 
 # Main chat interface
 st.header("Chat with Agent")
-
-# Initialize tool execution records if not present
-if "tool_executions" not in st.session_state:
-    st.session_state.tool_executions = []
 
 # Function to display tool execution details
 def display_tool_executions():
@@ -386,20 +409,20 @@ if user_input := st.chat_input("Type your message here..."):
                                     "output": tool_output,
                                     "timestamp": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                                 })
-                    
+
                     # Extract and display the response
                     output = ""
                     
                     if "messages" in response:
                         for msg in response["messages"]:
-                            if hasattr(msg, "content"):
-                                output += str(msg.content)
-                            else:
-                                output += str(msg)
-                    else:
-                        output = str(response)
-                    
-                    st.write(output)
+                            if isinstance(msg, HumanMessage):
+                                continue  # Skip human messages
+                            elif hasattr(msg, 'name') and msg.name:  # ToolMessage
+                                st.code(msg.content)
+                            else:  # AIMessage
+                                if hasattr(msg, "content") and msg.content:
+                                    output = str(msg.content)
+                                    st.write(output)
                     
                     # Add assistant message to chat history
                     st.session_state.chat_history.append({"role": "assistant", "content": output})
@@ -408,7 +431,6 @@ if user_input := st.chat_input("Type your message here..."):
                     display_tool_executions()
                 except Exception as e:
                     st.error(f"Error processing your request: {str(e)}")
-                    import traceback
                     st.code(traceback.format_exc(), language="python")
 
 # Footer
@@ -422,3 +444,16 @@ For more information, check out:
 - [LangChain MCP Adapters](https://github.com/langchain-ai/langchain-mcp-adapters)
 - [Model Context Protocol](https://modelcontextprotocol.io/introduction)
 """)
+
+# Proper cleanup when the session ends
+def on_shutdown():
+    if st.session_state.client is not None:
+        try:
+            # Close the client properly
+            run_async(st.session_state.client.__aexit__(None, None, None))
+        except Exception as e:
+            print(f"Error during shutdown: {str(e)}")
+
+# Register the cleanup function
+import atexit
+atexit.register(on_shutdown)
