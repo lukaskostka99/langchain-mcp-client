@@ -281,42 +281,7 @@ def sidebar():
                             except Exception as e:
                                 st.error(f"Error parsing tool schema: {str(e)}")
 
-def main():
-    # Set page configuration
-    st.set_page_config(
-        page_title="LangChain MCP Client",
-        page_icon="🧩",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
-
-    # Session state initialization
-    if "client" not in st.session_state:
-        st.session_state.client = None
-    if "agent" not in st.session_state:
-        st.session_state.agent = None
-    if "tools" not in st.session_state:
-        st.session_state.tools = []
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
-    if "servers" not in st.session_state:
-        st.session_state.servers = {}
-    if "current_tab" not in st.session_state:
-        st.session_state.current_tab = "Single Server"
-    if "tool_executions" not in st.session_state:
-        st.session_state.tool_executions = []
-    if "loop" not in st.session_state:
-        st.session_state.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(st.session_state.loop)
-
-    atexit.register(on_shutdown)
-
-    # Main app layout
-    st.title("🧩 LangChain MCP Client")
-
-    # Sidebar for configuration
-    sidebar()
-
+def tab_chat():
     # Main chat interface
     st.header("Chat with Agent")
 
@@ -402,5 +367,61 @@ def main():
                         st.error(f"Error processing your request: {str(e)}")
                         st.code(traceback.format_exc(), language="python")
 
+
+def tab_about():
+    st.markdown("""
+    ### About
+    This application demonstrates a Streamlit interface for LangChain MCP (Model Context Protocol) adapters. 
+    It allows you to connect to MCP servers and use their tools with different LLM providers.
+
+    For more information, check out:
+    - [LangChain MCP Adapters](https://github.com/langchain-ai/langchain-mcp-adapters)
+    - [Model Context Protocol](https://modelcontextprotocol.io/introduction)
+    """)
+
+def main():
+    # Set page configuration
+    st.set_page_config(
+        page_title="LangChain MCP Client",
+        page_icon="🧩",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+
+    # Session state initialization
+    if "client" not in st.session_state:
+        st.session_state.client = None
+    if "agent" not in st.session_state:
+        st.session_state.agent = None
+    if "tools" not in st.session_state:
+        st.session_state.tools = []
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+    if "servers" not in st.session_state:
+        st.session_state.servers = {}
+    if "current_tab" not in st.session_state:
+        st.session_state.current_tab = "Single Server"
+    if "tool_executions" not in st.session_state:
+        st.session_state.tool_executions = []
+    if "loop" not in st.session_state:
+        st.session_state.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(st.session_state.loop)
+
+    atexit.register(on_shutdown)
+
+    # Main app layout
+    st.title("🧩 LangChain MCP Client")
+
+    # Sidebar for configuration
+    sidebar()
+
+    # Tabs for different sections
+    t_chat, t_about = st.tabs(["🗨️ Chat", "ℹ️ About"])
+
+    with t_chat:
+        tab_chat()
+    with t_about:
+        tab_about()
+        
 if __name__ == "__main__":
     main()

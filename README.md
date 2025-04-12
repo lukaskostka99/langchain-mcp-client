@@ -4,18 +4,18 @@ This Streamlit application provides a user interface for connecting to LangChain
 
 ## Features
 
-- 🔌 Connect to MCP servers via SSE (Server-Sent Events)
-- 🌐 Support for both single server and multiple server configurations 
-- 🤖 Select between different LLM providers (OpenAI/Claude)
-- 🧰 View, test, and use available MCP tools directly from the UI
-- 💬 Chat interface for interacting with the LLM agent
-- 📊 Tool execution history and detailed results display
+- Connect to MCP servers via SSE (Server-Sent Events)
+- Support for both single server and multiple server configurations 
+- Select between different LLM providers (OpenAI/Claude)
+- View, test, and use available MCP tools directly from the UI
+- Chat interface for interacting with the LLM agent
+- Tool execution results display
 
 ## Installation
 
 1. Clone this repository:
 ```bash
-git clone https://github.com/your-username/langchain-mcp-client.git
+git clone https://github.com/guinacio/langchain-mcp-client.git
 cd langchain-mcp-client
 ```
 
@@ -24,15 +24,6 @@ cd langchain-mcp-client
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
-```
-
-3. Create a `requirements.txt` file with the following dependencies:
-```
-streamlit>=1.31.0
-langchain-mcp-adapters>=0.0.7
-langchain-openai>=0.0.3
-langchain-anthropic>=0.1.1
-langgraph>=0.0.26
 ```
 
 ## Running the Application
@@ -46,31 +37,8 @@ The application will be available at http://localhost:8501
 
 ## Setting Up an MCP Server
 
-To use this application, you'll need an MCP server running. Here's an example of how to create a simple MCP server:
-
-1. Create a file named `weather_server.py`:
-```python
-from typing import List
-from mcp.server.fastmcp import FastMCP
-
-mcp = FastMCP("Weather")
-
-@mcp.tool()
-async def get_weather(location: str) -> str:
-    """Get weather for location."""
-    return f"It's currently sunny and 72°F in {location}"
-
-@mcp.tool()
-async def get_forecast(location: str, days: int = 3) -> str:
-    """Get weather forecast for a location."""
-    forecast = []
-    for i in range(days):
-        forecast.append(f"Day {i+1}: Partly cloudy, high of 75°F, low of 60°F")
-    return "\n".join(forecast)
-
-if __name__ == "__main__":
-    mcp.run(transport="sse")
-```
+To use this application, you'll need an MCP server running or a valid URL to an MCP server. 
+Use the simple MCP server available on weather_server.py for a quick test:
 
 2. Install the MCP library:
 ```bash

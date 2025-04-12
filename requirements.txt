@@ -4,3 +4,4 @@ langchain-openai>=0.0.3
 langchain-anthropic>=0.1.1
 langgraph>=0.0.26
 mcp>=0.0.3
+nest-asyncio-1.6.0

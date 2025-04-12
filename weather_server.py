@@ -5,7 +5,14 @@ mcp = FastMCP("Weather Service")
 
 @mcp.tool()
 async def get_current_weather(location: str) -> str:
-    """Get the current weather for a location."""
+    """Get the current weather for a location.
+    
+    Args:
+        location: The name of the city or location
+
+    Returns:
+        A string describing the current weather conditions
+    """
     # This is a mock implementation - in a real application,
     # you would call a weather API or service
     return f"It's currently sunny and 72°F in {location}"
@@ -17,6 +24,9 @@ async def get_forecast(location: str, days: int = 3) -> str:
     Args:
         location: The name of the city or location
         days: Number of days to forecast (default: 3)
+    
+    Returns:
+        A string describing the weather forecast
     """
     # This is a mock implementation
     forecast = []
@@ -32,7 +42,14 @@ async def get_forecast(location: str, days: int = 3) -> str:
 
 @mcp.tool()
 async def get_weather_alert(location: str) -> str:
-    """Check if there are any weather alerts or warnings for a location."""
+    """Check if there are any weather alerts or warnings for a location.
+    
+    Args:
+        location: The name of the city or location
+    
+    Returns:
+        A string describing any weather alerts or warnings
+    """
     # Mock implementation
     alerts = {
         "New York": "Heat advisory in effect until 8 PM EDT",
@@ -51,6 +68,9 @@ async def convert_temperature(value: float, from_unit: str, to_unit: str) -> str
         value: The temperature value to convert
         from_unit: The unit to convert from ('C', 'F', or 'K')
         to_unit: The unit to convert to ('C', 'F', or 'K')
+    
+    Returns:
+        A string describing the converted temperature
     """
     # Convert to Celsius first
     if from_unit.upper() == 'F':
