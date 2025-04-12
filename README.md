@@ -1,6 +1,6 @@
 # LangChain MCP Client Streamlit App
 
-This Streamlit application provides a user interface for connecting to LangChain MCP (Model Context Protocol) servers and interacting with them using different LLM providers (OpenAI or Anthropic).
+This Streamlit application provides a user interface for connecting to LangChain MCP (Model Context Protocol) servers and interacting with them using different LLM providers (OpenAI, Anthropic, Google...).
 
 ## Features
 
@@ -82,6 +82,7 @@ The server will start on port 8000 by default. In the Streamlit app, you can con
 
 - **STDIO MCP Servers**: Support for connecting to MCP servers using standard input/output (STDIO) for more flexible server configurations.
 - **Test Tools Individually**: Implement functionality to test each tool individually from the UI to ensure they work as expected.
+- **Using Local LLMs**: Support for connecting local LLMs (Llama, DeepSeek, Qwen...)
 - **Agent Memory**: Introduce memory capabilities for the agent to retain context across interactions.
 - **RAG (File Upload)**: Enable Retrieval-Augmented Generation (RAG) by allowing users to upload files that the agent can use to enhance its responses.
 
