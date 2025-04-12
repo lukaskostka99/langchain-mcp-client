@@ -10,6 +10,9 @@ cleanup() {
 # Set up trap for SIGINT (Ctrl+C)
 trap cleanup SIGINT
 
+# Activate the virtual environment
+source venv/bin/activate
+
 # Start the MCP server
 echo "Starting MCP Weather Server..."
 python weather_server.py &

@@ -1,7 +1,7 @@
 @echo off
 echo Starting MCP Weather Server and Streamlit App...
 
-call "C:\Streamlit\.venv\Scripts\activate.bat"
+call "venv\Scripts\activate"
 
 :: Start the MCP server in a new window
 start "MCP Weather Server" cmd /c "python weather_server.py"
