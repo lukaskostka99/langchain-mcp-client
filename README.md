@@ -101,11 +101,14 @@ The server will start on port 8000 by default. In the Streamlit app, you can con
   - Manage (add/remove) servers through the UI
   - Connect to all configured servers at once
 
-### Tool Testing
-- Select any available tool and test it directly from the UI
-- Input parameters based on tool schema
-- View tool execution results in a formatted display
-- Browse tool execution history
+### Available Tools
+- View all available tools from connected MCP servers in the sidebar
+- Each tool displays:
+  - Name and description
+  - Required and optional parameters with their types
+  - Parameter descriptions and constraints
+- Tools are automatically available to the LLM agent in the chat interface
+- Tool executions and their results are tracked in the chat history
 
 ## Troubleshooting
 
