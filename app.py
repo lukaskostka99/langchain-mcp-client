@@ -16,6 +16,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_ollama import ChatOllama
 from langgraph.prebuilt import create_react_agent
 from langchain_core.tools import BaseTool
 from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
@@ -60,9 +61,15 @@ def create_llm_model(llm_provider: str, api_key: str, model_name: str):
         return ChatGoogleGenerativeAI(
             google_api_key=api_key,
             model=model_name,
-            temperature=0,
+            temperature=0.7,
             max_tokens=None,
             max_retries=2,
+        )
+    elif llm_provider == "Ollama":
+        return ChatOllama(
+            model=model_name,
+            temperature=0.7,
+            # other params...
         )
     else:
         raise ValueError(f"Unsupported LLM provider: {llm_provider}")
@@ -102,16 +109,19 @@ def sidebar():
         # LLM Provider selection
         llm_provider = st.selectbox(
             "Select LLM Provider",
-            options=["OpenAI", "Anthropic", "Google"],
+            options=["OpenAI", "Anthropic", "Google", "Ollama"],
             index=0,
             on_change=reset_connection_state
         )
-        
+        no_key = False
+        if llm_provider == "Ollama":
+            no_key = True
         # API Key input
         api_key = st.text_input(
             f"{llm_provider} API Key",
             type="password",
-            help=f"Enter your {llm_provider} API Key"
+            help=f"Enter your {llm_provider} API Key",
+            disabled=no_key # Disable input if no key is needed
         )
         
         # Model selection based on provider
@@ -123,6 +133,9 @@ def sidebar():
             default_model_idx = 0
         elif llm_provider == "Google":  # Google
             model_options = ["gemini-2.0-flash-001", "gemini-2.5-pro-exp-03-25"]
+            default_model_idx = 0
+        elif llm_provider == "Ollama":  # Ollama
+            model_options = ["granite3.3:8b"]
             default_model_idx = 0
         
         model_name = st.selectbox(
@@ -154,7 +167,7 @@ def sidebar():
             
             # Connect button for single server
             if st.button("Connect to MCP Server"):
-                if not api_key:
+                if not api_key and (not llm_provider == "Ollama"):
                     st.error(f"Please enter your {llm_provider} API Key")
                 elif not server_url:
                     st.error("Please enter a valid MCP Server URL")
@@ -243,7 +256,7 @@ def sidebar():
             
             # Connect to all servers button
             if st.button("Connect to All Servers"):
-                if not api_key:
+                if not api_key and (not llm_provider == "Ollama"):
                     st.error(f"Please enter your {llm_provider} API Key")
                 elif not st.session_state.servers:
                     st.error("Please add at least one server")
