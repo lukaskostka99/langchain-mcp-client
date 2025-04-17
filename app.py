@@ -18,7 +18,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
 from langchain_core.tools import BaseTool
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
 
 # Helper functions
 def run_async(coro):
@@ -329,20 +329,20 @@ def sidebar():
                             # Display parameter info
                             st.code(" ".join(param_desc))
 
+# Function to display tool execution details
+def display_tool_executions():
+    if st.session_state.tool_executions:
+        with st.expander("Tool Execution History", expanded=False):
+            for i, exec_record in enumerate(st.session_state.tool_executions):
+                st.markdown(f"### Execution #{i+1}: `{exec_record['tool_name']}`")
+                st.markdown(f"**Input:** ```json{json.dumps(exec_record['input'])}```")
+                st.markdown(f"**Output:** ```{exec_record['output']}```")
+                st.markdown(f"**Time:** {exec_record['timestamp']}")
+                st.divider()
+
 def tab_chat():
     # Main chat interface
     st.header("Chat with Agent")
-
-    # Function to display tool execution details
-    def display_tool_executions():
-        if st.session_state.tool_executions:
-            with st.expander("Tool Execution History", expanded=False):
-                for i, exec_record in enumerate(st.session_state.tool_executions):
-                    st.markdown(f"### Execution #{i+1}: `{exec_record['tool_name']}`")
-                    st.markdown(f"**Input:** ```json\n{json.dumps(exec_record['input'], indent=2)}\n```")
-                    st.markdown(f"**Output:** ```\n{exec_record['output']}\n```")
-                    st.markdown(f"**Time:** {exec_record['timestamp']}")
-                    st.divider()
 
     # Connection status indicator
     connection_status = st.empty()
@@ -355,11 +355,10 @@ def tab_chat():
     for message in st.session_state.chat_history:
         if message["role"] == "user":
             st.chat_message("user").write(message["content"])
-        else:
+        if message["role"] == "assistant" and "tool" in message and message["tool"]:
+            st.code(message['tool'])
+        if message["role"] == "assistant":
             st.chat_message("assistant").write(message["content"])
-
-    # Display tool executions if any
-    display_tool_executions()
 
     # Chat input
     if user_input := st.chat_input("Type your message here..."):
@@ -377,20 +376,27 @@ def tab_chat():
                         # Run the agent
                         response = run_async(run_agent(st.session_state.agent, user_input))
                         
+                        tool_output = None
                         # Extract tool executions if available
-                        if "intermediate_steps" in response:
-                            for step in response["intermediate_steps"]:
-                                if len(step) >= 2:
-                                    tool_action = step[0]
-                                    tool_output = step[1]
-                                    
-                                    # Record tool execution
-                                    st.session_state.tool_executions.append({
-                                        "tool_name": tool_action.tool,
-                                        "input": tool_action.tool_input,
-                                        "output": tool_output,
-                                        "timestamp": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                                    })
+                        if "messages" in response:
+                            for msg in response["messages"]:
+                                # Look for AIMessage with tool calls
+                                if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                                    for tool_call in msg.tool_calls:
+                                        # Find corresponding ToolMessage
+                                        tool_output = next(
+                                            (m.content for m in response["messages"] 
+                                             if isinstance(m, ToolMessage) and 
+                                             m.tool_call_id == tool_call['id']),
+                                            None
+                                        )
+                                        if tool_output:
+                                            st.session_state.tool_executions.append({
+                                                "tool_name": tool_call['name'],
+                                                "input": tool_call['args'],
+                                                "output": tool_output,
+                                                "timestamp": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                                            })
 
                         # Extract and display the response
                         output = ""
@@ -407,16 +413,13 @@ def tab_chat():
                                         st.write(output)
                         
                         # Add assistant message to chat history
-                        st.session_state.chat_history.append({"role": "assistant", "content": output})
-                        
-                        # Update tool execution display
-                        display_tool_executions()
-
+                        st.session_state.chat_history.append({"role": "assistant", "tool": tool_output, "content": output})
+                    
                         st.rerun()
+
                     except Exception as e:
                         st.error(f"Error processing your request: {str(e)}")
                         st.code(traceback.format_exc(), language="python")
-
 
 def tab_about():
     st.image("logo_transparent.png", width=200)
@@ -480,8 +483,10 @@ def main():
 
     with t_chat:
         tab_chat()
+        # Tool execution display
+        display_tool_executions()
     with t_about:
         tab_about()
-        
+
 if __name__ == "__main__":
     main()
