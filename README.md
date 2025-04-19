@@ -58,6 +58,7 @@ The server will start on port 8000 by default. In the Streamlit app, you can con
 - **OpenAI**: Requires an OpenAI API key and supports models like gpt-4o, gpt-4, and gpt-3.5-turbo
 - **Anthropic**: Requires an Anthropic API key and supports Claude models
 - **Google**: Requires a Google Generative Language / Vertex AI API
+- **Local LLMs**: Use a local LLM using Ollama
 
 ### MCP Server Connection
 - Currently supports SSE (Server-Sent Events) connections
@@ -83,7 +84,7 @@ The server will start on port 8000 by default. In the Streamlit app, you can con
 
 - **STDIO MCP Servers**: Support for connecting to MCP servers using standard input/output (STDIO) for more flexible server configurations.
 - **Test Tools Individually**: Implement functionality to test each tool individually from the UI to ensure they work as expected.
-- **Using Local LLMs**: Support for connecting local LLMs (Llama, DeepSeek, Qwen...)
+- ✅ **Using Local LLMs**: Support for connecting local LLMs (Llama, DeepSeek, Qwen...)
 - **Agent Memory**: Introduce memory capabilities for the agent to retain context across interactions.
 - **RAG (File Upload)**: Enable Retrieval-Augmented Generation (RAG) by allowing users to upload files that the agent can use to enhance its responses.
 
