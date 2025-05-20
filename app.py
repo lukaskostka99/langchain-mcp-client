@@ -29,11 +29,11 @@ def run_async(coro):
 async def setup_mcp_client(server_config: Dict[str, Dict]) -> MultiServerMCPClient:
     """Initialize a MultiServerMCPClient with the provided server configuration."""
     client = MultiServerMCPClient(server_config)
-    return await client.__aenter__()
+    return client
 
 async def get_tools_from_client(client: MultiServerMCPClient) -> List[BaseTool]:
     """Get tools from the MCP client."""
-    return client.get_tools()
+    return await client.get_tools()
 
 async def run_agent(agent, message: str) -> Dict:
     """Run the agent with the provided message."""
@@ -74,24 +74,8 @@ def create_llm_model(llm_provider: str, api_key: str, model_name: str):
     else:
         raise ValueError(f"Unsupported LLM provider: {llm_provider}")
 
-def on_shutdown():
-    # Proper cleanup when the session ends
-    if st.session_state.client is not None:
-        try:
-            # Close the client properly
-            run_async(st.session_state.client.__aexit__(None, None, None))
-        except Exception as e:
-            print(f"Error during shutdown: {str(e)}")
-
 def reset_connection_state():
     """Reset all connection-related session state variables."""
-    if st.session_state.client is not None:
-        try:
-            # Close the existing client properly
-            run_async(st.session_state.client.__aexit__(None, None, None))
-        except Exception as e:
-            print(f"Error closing previous client: {str(e)}")
-    
     st.session_state.client = None
     st.session_state.agent = None
     st.session_state.tools = []
@@ -135,7 +119,7 @@ def sidebar():
             model_options = ["gemini-2.0-flash-001", "gemini-2.5-pro-exp-03-25"]
             default_model_idx = 0
         elif llm_provider == "Ollama":  # Ollama
-            model_options = ["granite3.3:8b"]
+            model_options = ["granite3.3:8b", "qwen3:4b"]
             default_model_idx = 0
         
         model_name = st.selectbox(
@@ -186,13 +170,6 @@ def sidebar():
                             }
                             
                             # Initialize the MCP client
-                            if st.session_state.client is not None:
-                                # First close the existing client properly
-                                try:
-                                    run_async(st.session_state.client.__aexit__(None, None, None))
-                                except Exception as e:
-                                    st.warning(f"Error closing previous client: {str(e)}")
-                            
                             st.session_state.client = run_async(setup_mcp_client(server_config))
                             
                             # Get tools from the client
@@ -264,13 +241,6 @@ def sidebar():
                     with st.spinner("Connecting to MCP servers..."):
                         try:
                             # Initialize the MCP client with all servers
-                            if st.session_state.client is not None:
-                                # First close the existing client properly
-                                try:
-                                    run_async(st.session_state.client.__aexit__(None, None, None))
-                                except Exception as e:
-                                    st.warning(f"Error closing previous client: {str(e)}")
-                            
                             st.session_state.client = run_async(setup_mcp_client(st.session_state.servers))
                             
                             # Get tools from the client
@@ -431,8 +401,15 @@ def tab_chat():
                         st.rerun()
 
                     except Exception as e:
-                        st.error(f"Error processing your request: {str(e)}")
-                        st.code(traceback.format_exc(), language="python")
+                        error_msg = str(e)
+                        
+                        # Check for Ollama connection error
+                        if "ConnectError: All connection attempts failed" in error_msg:
+                            st.error("⚠️ Could not connect to Ollama. Please make sure Ollama is running by executing 'ollama serve' in a terminal.")
+                            st.info("To start Ollama, open a terminal/command prompt and run: `ollama serve`")
+                        else:
+                            st.error(f"Error processing your request: {error_msg}")
+                            st.code(traceback.format_exc(), language="python")
 
 def tab_about():
     st.image("logo_transparent.png", width=200)
@@ -485,8 +462,6 @@ def main():
     if "loop" not in st.session_state:
         st.session_state.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(st.session_state.loop)
-
-    atexit.register(on_shutdown)
 
     # Sidebar for configuration
     sidebar()
