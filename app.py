@@ -6,7 +6,6 @@ import traceback
 from typing import Dict, List, Optional, Any
 import os
 import nest_asyncio
-import atexit
 
 # Apply nest_asyncio to allow nested asyncio event loops (needed for Streamlit's execution model)
 nest_asyncio.apply()
@@ -119,7 +118,7 @@ def sidebar():
             model_options = ["gemini-2.0-flash-001", "gemini-2.5-pro-exp-03-25"]
             default_model_idx = 0
         elif llm_provider == "Ollama":  # Ollama
-            model_options = ["granite3.3:8b", "qwen3:4b"]
+            model_options = ["granite3.3:8b", "qwen3:4b", "Other"]
             default_model_idx = 0
         
         model_name = st.selectbox(
@@ -128,6 +127,15 @@ def sidebar():
             index=default_model_idx,
             on_change=reset_connection_state
         )
+        
+        # Display a text input field if "Other" is selected in Ollama mode
+        if llm_provider == "Ollama" and model_name == "Other":
+            custom_model = st.text_input(
+                "Custom Model Name",
+                placeholder="Enter custom Ollama model name (e.g. llama3)"
+            )
+            if custom_model:
+                model_name = custom_model
         
         # MCP Server configuration
         st.header("MCP Server Configuration")
