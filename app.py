@@ -367,7 +367,7 @@ def tab_chat():
                         # Run the agent
                         response = run_async(run_agent(st.session_state.agent, user_input))
                         
-                        tool_output = None
+                        tool_outputs = []  # Store multiple tool outputs
                         # Extract tool executions if available
                         if "messages" in response:
                             for msg in response["messages"]:
@@ -382,6 +382,7 @@ def tab_chat():
                                             None
                                         )
                                         if tool_output:
+                                            tool_outputs.append(tool_output)  # Add to list
                                             st.session_state.tool_executions.append({
                                                 "tool_name": tool_call['name'],
                                                 "input": tool_call['args'],
@@ -403,8 +404,12 @@ def tab_chat():
                                         output = str(msg.content)
                                         st.write(output)
                         
-                        # Add assistant message to chat history
-                        st.session_state.chat_history.append({"role": "assistant", "tool": tool_output, "content": output})
+                        # Add assistant message to chat history with all tool outputs
+                        st.session_state.chat_history.append({
+                            "role": "assistant", 
+                            "tool": "\n".join(tool_outputs) if tool_outputs else None,  # Join all tool outputs
+                            "content": output
+                        })
                     
                         st.rerun()
 
