@@ -9,8 +9,34 @@ This Streamlit application provides a user interface for connecting to MCP (Mode
 - Select between different LLM providers (OpenAI/Claude)
 - View, test, and use available MCP tools directly from the UI
 - **Individual Tool Testing**: Test each tool individually with custom parameters and view detailed results
+- **Agent Memory**: Persistent conversation memory with thread management and export/import capabilities
 - Chat interface for interacting with the LLM agent
 - Tool execution results display
+
+## Memory System
+
+### Memory Types
+
+1. **Short-term (Session)**: 
+   - Conversations stored in browser session memory
+   - Lost when browser is closed or app restarted
+   - Uses LangGraph's InMemorySaver
+
+2. **Persistent (Cross-session)**:
+   - Conversations stored in SQLite database (`conversations.db`)
+   - Persists across browser sessions and app restarts
+   - Uses LangGraph's SqliteSaver with custom metadata management
+   - Auto-saves conversations during chat
+   - Browse, load, and manage saved conversations
+
+### Persistent Storage Features
+
+- **Automatic Conversation Saving**: Conversations are automatically saved to SQLite during chat
+- **Conversation Browser**: View and manage all stored conversations with metadata
+- **Thread Management**: Switch between different conversation threads
+- **Export/Import**: Export conversations as JSON files or import previous conversations
+- **Database Statistics**: Monitor database size, conversation count, and message totals
+- **Conversation Search**: Browse conversations by title, date, or message count
 
 ## Installation
 
@@ -91,12 +117,28 @@ The server will start on port 8000 by default. In the Streamlit app, you can con
 - Export test results to JSON format
 - Performance metrics (success rate, average execution time)
 
+### Agent Memory
+- **Conversation Persistence**: Enable/disable memory for chat history
+- **Thread Management**: Separate conversations with unique thread IDs
+- **Memory Controls**: Clear memory, reset threads, set message limits
+- **Export/Import**: Save and restore conversation history
+- **Memory Analytics**: Track message counts, memory usage, and statistics
+- **Real-time Status**: Visual indicators for memory state and thread information
+- **Flexible Configuration**: Choose memory types and limits based on needs
+- **History Tool**: When memory is enabled, the agent gains access to a `get_conversation_history` tool that allows it to:
+  - Search through previous conversations
+  - Reference earlier discussions
+  - Summarize conversation topics
+  - Filter messages by type (user/assistant/tool)
+  - Access specific parts of the conversation history
+  - Clean, formatted output that's easy to read in the chat interface
+
 ## Future Improvements
 
 - **STDIO MCP Servers**: Support for connecting to MCP servers using standard input/output (STDIO) for more flexible server configurations.
 - ✅ **Test Tools Individually**: Implement functionality to test each tool individually from the UI to ensure they work as expected.
 - ✅ **Using Local LLMs**: Support for connecting local LLMs (Llama, DeepSeek, Qwen...)
-- **Agent Memory**: Introduce memory capabilities for the agent to retain context across interactions.
+- ✅ **Agent Memory**: Introduce memory capabilities for the agent to retain context across interactions.
 - **RAG (File Upload)**: Enable Retrieval-Augmented Generation (RAG) by allowing users to upload files that the agent can use to enhance its responses.
 
 ## Troubleshooting
