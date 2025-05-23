@@ -8,6 +8,7 @@ This Streamlit application provides a user interface for connecting to MCP (Mode
 - Support for both single server and multiple server configurations 
 - Select between different LLM providers (OpenAI/Claude)
 - View, test, and use available MCP tools directly from the UI
+- **Individual Tool Testing**: Test each tool individually with custom parameters and view detailed results
 - Chat interface for interacting with the LLM agent
 - Tool execution results display
 
@@ -80,10 +81,20 @@ The server will start on port 8000 by default. In the Streamlit app, you can con
 - Tools are automatically available to the LLM agent in the chat interface
 - Tool executions and their results are tracked in the chat history
 
+### Tool Testing
+- **Individual Tool Testing**: Access via the "🔧 Test Tools" tab
+- Test each tool individually with custom parameters
+- Dynamic form generation based on tool schema
+- Real-time parameter validation
+- Execution timing and success/failure tracking
+- Test result history and statistics
+- Export test results to JSON format
+- Performance metrics (success rate, average execution time)
+
 ## Future Improvements
 
 - **STDIO MCP Servers**: Support for connecting to MCP servers using standard input/output (STDIO) for more flexible server configurations.
-- **Test Tools Individually**: Implement functionality to test each tool individually from the UI to ensure they work as expected.
+- ✅ **Test Tools Individually**: Implement functionality to test each tool individually from the UI to ensure they work as expected.
 - ✅ **Using Local LLMs**: Support for connecting local LLMs (Llama, DeepSeek, Qwen...)
 - **Agent Memory**: Introduce memory capabilities for the agent to retain context across interactions.
 - **RAG (File Upload)**: Enable Retrieval-Augmented Generation (RAG) by allowing users to upload files that the agent can use to enhance its responses.
