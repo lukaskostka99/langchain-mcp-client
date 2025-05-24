@@ -1,17 +1,42 @@
 # LangChain MCP Client Streamlit App
 
-This Streamlit application provides a user interface for connecting to MCP (Model Context Protocol) servers and interacting with them using different LLM providers (OpenAI, Anthropic, Google...).
+This Streamlit application provides a user interface for connecting to MCP (Model Context Protocol) servers and interacting with them using different LLM providers (OpenAI, Anthropic, Google, Ollama).
+
+## ⚠️ Development Status
+
+**This application is currently in active development.** While functional, you may encounter bugs, incomplete features, or unexpected behavior. We appreciate your patience and welcome feedback to help improve the application.
 
 ## Features
 
-- Connect to MCP servers via SSE (Server-Sent Events)
-- Support for both single server and multiple server configurations 
-- Select between different LLM providers (OpenAI/Claude)
-- View, test, and use available MCP tools directly from the UI
-- **Individual Tool Testing**: Test each tool individually with custom parameters and view detailed results
-- **Agent Memory**: Persistent conversation memory with thread management and export/import capabilities
-- Chat interface for interacting with the LLM agent
-- Tool execution results display
+- **Multi-Provider LLM Support**: Connect to OpenAI, Anthropic (Claude), Google Generative AI, or local models via Ollama
+- **Advanced Configuration**: Comprehensive configuration interface with system prompts, temperature control, token limits, and provider-specific settings
+- **System Prompt Presets**: Choose from built-in presets (Default, Code Assistant, Research Assistant, Creative Assistant, Business Assistant) or create custom system prompts
+- **MCP Server Integration**: Connect to single or multiple MCP servers via SSE (Server-Sent Events)
+- **Individual Tool Testing**: Test each MCP tool individually with custom parameters, view detailed results, and track performance metrics
+- **Intelligent Agent Chat**: Chat interface with LLM agent that can dynamically use available MCP tools
+- **Advanced Memory System**: Persistent conversation memory with thread management, export/import capabilities, and conversation history search
+- **Configuration Management**: Save, load, export, and reset configurations with real-time status indicators
+- **Tool Execution Tracking**: View detailed tool execution results and performance analytics
+
+## Configuration System
+
+### LLM Providers & Parameters
+- **OpenAI**: GPT-4o, GPT-4, GPT-3.5-turbo with temperature (0.0-2.0), max tokens (1-4000), timeout (10-300s)
+- **Anthropic**: Claude models with temperature (0.0-1.0), max tokens (1-4000), timeout (10-300s)  
+- **Google**: Gemini models with temperature (0.0-1.0), max tokens (1-2048), timeout (10-180s)
+- **Ollama**: Local models with temperature (0.0-1.0), max tokens (1-4000), timeout (10-600s)
+
+### System Prompts
+- **Built-in Presets**: Five specialized system prompts for different use cases
+- **Custom Prompts**: Create and save your own system prompts
+- **Real-time Application**: Apply configuration changes with instant feedback
+- **Configuration Status**: Visual indicators showing applied/changed/default states
+
+### Configuration Management
+- **Apply Configuration**: Smart button that detects changes and applies settings
+- **Export/Import**: Save configurations as JSON files for backup or sharing
+- **Reset Options**: Reset to defaults or previously applied settings
+- **Change Detection**: Real-time tracking of configuration modifications
 
 ## Memory System
 
@@ -29,14 +54,39 @@ This Streamlit application provides a user interface for connecting to MCP (Mode
    - Auto-saves conversations during chat
    - Browse, load, and manage saved conversations
 
-### Persistent Storage Features
+### Advanced Memory Features
 
-- **Automatic Conversation Saving**: Conversations are automatically saved to SQLite during chat
-- **Conversation Browser**: View and manage all stored conversations with metadata
-- **Thread Management**: Switch between different conversation threads
-- **Export/Import**: Export conversations as JSON files or import previous conversations
-- **Database Statistics**: Monitor database size, conversation count, and message totals
-- **Conversation Search**: Browse conversations by title, date, or message count
+- **Conversation Import/Export**: Import previous conversations with preview and confirmation system
+- **Thread Management**: Switch between different conversation threads with unique IDs
+- **Memory Analytics**: Track message counts, memory usage, conversation statistics, and database size
+- **Conversation Browser**: View and manage all stored conversations with metadata and search capabilities
+- **History Tool Integration**: When memory is enabled, the agent gains access to a `get_conversation_history` tool that allows it to:
+  - Search through previous conversations by type or content
+  - Reference earlier discussions and maintain context
+  - Summarize conversation topics and filter messages
+  - Access specific parts of the conversation history with clean, formatted output
+
+### Memory Safety & Performance
+- **Import Validation**: Safe import system with format validation and preview before applying
+- **Loop Prevention**: Robust safeguards against infinite loops during memory operations
+- **Flexible Limits**: Configurable message limits and memory constraints
+- **Real-time Status**: Visual indicators for memory state, thread information, and change detection
+
+## Tool Testing & Analytics
+- **Individual Tool Testing**: Access via the "🔧 Test Tools" tab
+- **Dynamic Parameter Forms**: Auto-generated forms based on tool schemas with real-time validation
+- **Performance Tracking**: Execution timing, success/failure rates, and detailed statistics
+- **Test History**: Complete test result history with export capabilities
+- **Result Analysis**: Success rate calculations and average execution time metrics
+- **JSON Export**: Export test results and performance data for external analysis
+
+## Future Improvements
+
+- **STDIO MCP Servers**: Support for connecting to MCP servers using standard input/output (STDIO) for more flexible server configurations
+- **RAG (File Upload)**: Enable Retrieval-Augmented Generation (RAG) by allowing users to upload files that the agent can use to enhance its responses
+- **Enhanced Tool Validation**: Advanced parameter validation and schema checking for MCP tools
+- **Multi-threaded Processing**: Parallel processing for multiple tool executions and server connections
+
 
 ## Installation
 
@@ -78,68 +128,6 @@ python weather_server.py
 ```
 
 The server will start on port 8000 by default. In the Streamlit app, you can connect to it using the URL `http://localhost:8000/sse`.
-
-## Configuration Options
-
-### LLM Providers
-- **OpenAI**: Requires an OpenAI API key and supports models like gpt-4o, gpt-4, and gpt-3.5-turbo
-- **Anthropic**: Requires an Anthropic API key and supports Claude models
-- **Google**: Requires a Google Generative Language / Vertex AI API
-- **Local LLMs**: Supports a local LLM using Ollama
-
-### MCP Server Connection
-- Currently supports SSE (Server-Sent Events) connections
-- Enter the URL of your MCP server's SSE endpoint (e.g., `http://localhost:8000/sse`)
-
-### Server Modes
-- **Single Server**: Connect to a single MCP server
-- **Multiple Servers**: Connect to multiple MCP servers simultaneously
-  - Add servers with unique names
-  - Manage (add/remove) servers through the UI
-  - Connect to all configured servers at once
-
-### Available Tools
-- View all available tools from connected MCP servers in the sidebar
-- Each tool displays:
-  - Name and description
-  - Required and optional parameters with their types
-  - Parameter descriptions and constraints
-- Tools are automatically available to the LLM agent in the chat interface
-- Tool executions and their results are tracked in the chat history
-
-### Tool Testing
-- **Individual Tool Testing**: Access via the "🔧 Test Tools" tab
-- Test each tool individually with custom parameters
-- Dynamic form generation based on tool schema
-- Real-time parameter validation
-- Execution timing and success/failure tracking
-- Test result history and statistics
-- Export test results to JSON format
-- Performance metrics (success rate, average execution time)
-
-### Agent Memory
-- **Conversation Persistence**: Enable/disable memory for chat history
-- **Thread Management**: Separate conversations with unique thread IDs
-- **Memory Controls**: Clear memory, reset threads, set message limits
-- **Export/Import**: Save and restore conversation history
-- **Memory Analytics**: Track message counts, memory usage, and statistics
-- **Real-time Status**: Visual indicators for memory state and thread information
-- **Flexible Configuration**: Choose memory types and limits based on needs
-- **History Tool**: When memory is enabled, the agent gains access to a `get_conversation_history` tool that allows it to:
-  - Search through previous conversations
-  - Reference earlier discussions
-  - Summarize conversation topics
-  - Filter messages by type (user/assistant/tool)
-  - Access specific parts of the conversation history
-  - Clean, formatted output that's easy to read in the chat interface
-
-## Future Improvements
-
-- **STDIO MCP Servers**: Support for connecting to MCP servers using standard input/output (STDIO) for more flexible server configurations.
-- ✅ **Test Tools Individually**: Implement functionality to test each tool individually from the UI to ensure they work as expected.
-- ✅ **Using Local LLMs**: Support for connecting local LLMs (Llama, DeepSeek, Qwen...)
-- ✅ **Agent Memory**: Introduce memory capabilities for the agent to retain context across interactions.
-- **RAG (File Upload)**: Enable Retrieval-Augmented Generation (RAG) by allowing users to upload files that the agent can use to enhance its responses.
 
 ## Troubleshooting
 
