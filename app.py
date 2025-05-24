@@ -496,7 +496,7 @@ def sidebar():
         # Choose between single server or multiple servers
         server_mode = st.radio(
             "Server Mode",
-            options=["Single Server", "Multiple Servers"],
+            options=["Single Server", "Multiple Servers", "No MCP Server (Chat Only)"],
             index=0,
             on_change=lambda: setattr(st.session_state, "current_tab", server_mode)
         )
@@ -564,7 +564,7 @@ def sidebar():
                             st.error(f"Error connecting to MCP server: {str(e)}")
                             st.code(traceback.format_exc(), language="python")
         
-        else:  # Multiple Servers mode
+        elif server_mode == "Multiple Servers":  # Multiple Servers mode
             # Server management section
             st.subheader("Server Management")
             
@@ -652,82 +652,158 @@ def sidebar():
                             st.error(f"Error connecting to MCP servers: {str(e)}")
                             st.code(traceback.format_exc(), language="python")
         
+        else:  # No MCP Server (Chat Only) mode
+            st.subheader("Direct Chat Mode")
+            st.info("💬 This mode provides a direct chat interface with the LLM without any MCP tools.")
+            
+            # Simple connect button for chat-only mode
+            if st.button("Start Chat Agent", type="primary"):
+                if not api_key and (not llm_provider == "Ollama"):
+                    st.error(f"Please enter your {llm_provider} API Key")
+                else:
+                    with st.spinner("Initializing chat agent..."):
+                        try:
+                            # Clear any existing MCP tools since we're in chat-only mode
+                            st.session_state.tools = []
+                            st.session_state.client = None  # No MCP client needed
+                            
+                            # Create the language model
+                            llm = create_llm_model(llm_provider, api_key, model_name)
+                            
+                            # Create checkpointer if memory is enabled
+                            checkpointer = None
+                            agent_tools = []  # Start with no MCP tools
+                            
+                            if st.session_state.get('memory_enabled', False):
+                                memory_type = st.session_state.get('memory_type', 'Short-term (Session)')
+                                if memory_type == "Persistent (Cross-session)" and hasattr(st.session_state, 'persistent_storage'):
+                                    # Use SQLite checkpointer for persistent storage
+                                    checkpointer = st.session_state.persistent_storage.get_checkpointer()
+                                else:
+                                    # Use in-memory checkpointer for short-term storage
+                                    checkpointer = InMemorySaver()
+                                
+                                st.session_state.checkpointer = checkpointer
+                                # Add history tool when memory is enabled
+                                agent_tools.append(create_history_tool())
+                            
+                            # Create the agent with no MCP tools (just LLM and optionally memory tool)
+                            st.session_state.agent = create_react_agent(llm, agent_tools, checkpointer=checkpointer)
+                            
+                            if agent_tools:
+                                st.success(f"✅ Chat agent ready! (Memory enabled with history tool)")
+                            else:
+                                st.success(f"✅ Chat agent ready! (No additional tools)")
+                        except Exception as e:
+                            st.error(f"Error initializing chat agent: {str(e)}")
+                            st.code(traceback.format_exc(), language="python")
+            
+            # Information about chat-only mode
+            with st.expander("ℹ️ About Chat-Only Mode"):
+                st.markdown("""
+                **Chat-Only Mode** provides a direct interface to the selected LLM without any MCP server tools.
+                
+                **Features:**
+                - Direct conversation with the LLM
+                - Memory support (if enabled)
+                - No external tool dependencies
+                - Faster setup and response times
+                
+                **Use Cases:**
+                - General conversation and Q&A
+                - Creative writing and brainstorming
+                - Learning and explanations
+                - Code review and discussion (without execution)
+                
+                **Note:** In this mode, the agent cannot perform external actions like web searches, file operations, or API calls that would normally be available through MCP tools.
+                """)
+        
         # Display available tools if connected
-        if st.session_state.tools:
+        if st.session_state.tools or (st.session_state.agent and st.session_state.get('memory_enabled', False)):
             st.header("Available Tools")
             
             # Show total tool count including history tool
-            total_tools = len(st.session_state.tools)
-            if st.session_state.get('memory_enabled', False):
-                total_tools += 1
-                st.info(f"📊 {total_tools} tools available ({len(st.session_state.tools)} MCP + 1 memory tool)")
+            mcp_tool_count = len(st.session_state.tools)
+            memory_tool_count = 1 if st.session_state.get('memory_enabled', False) else 0
+            total_tools = mcp_tool_count + memory_tool_count
+            
+            if mcp_tool_count > 0 and memory_tool_count > 0:
+                st.info(f"📊 {total_tools} tools available ({mcp_tool_count} MCP + {memory_tool_count} memory tool)")
+            elif mcp_tool_count > 0:
+                st.info(f"📊 {mcp_tool_count} MCP tools available")
+            elif memory_tool_count > 0:
+                st.info(f"📊 {memory_tool_count} memory tool available")
             else:
-                st.info(f"📊 {total_tools} MCP tools available")
+                st.info("📊 No tools available (Chat-only mode)")
             
             # Add history tool to the dropdown when memory is enabled
             tool_options = [tool.name for tool in st.session_state.tools]
             if st.session_state.get('memory_enabled', False):
                 tool_options.append("get_conversation_history (Memory)")
             
-            # Tool selection dropdown
-            selected_tool_name = st.selectbox(
-                "Available Tools",
-                options=tool_options,
-                index=0 if tool_options else None
-            )
-            
-            if selected_tool_name:
-                # Handle memory tool separately
-                if selected_tool_name == "get_conversation_history (Memory)":
-                    st.write("**Description:** Retrieve conversation history from the current session")
-                    st.write("**Parameters:**")
-                    st.code("message_type: string (optional) [default: all]")
-                    st.code("last_n_messages: integer (optional) [default: 10]") 
-                    st.code("search_query: string (optional)")
-                    st.info("💡 This tool allows the agent to access its conversation history when memory is enabled.")
-                else:
-                    # Find the selected MCP tool
-                    selected_tool = next((tool for tool in st.session_state.tools if tool.name == selected_tool_name), None)
-                    
-                    if selected_tool:
-                        # Display tool information
-                        st.write(f"**Description:** {selected_tool.description}")
+            # Only show tool selection if there are tools available
+            if tool_options:
+                # Tool selection dropdown
+                selected_tool_name = st.selectbox(
+                    "Available Tools",
+                    options=tool_options,
+                    index=0 if tool_options else None
+                )
+                
+                if selected_tool_name:
+                    # Handle memory tool separately
+                    if selected_tool_name == "get_conversation_history (Memory)":
+                        st.write("**Description:** Retrieve conversation history from the current session")
+                        st.write("**Parameters:**")
+                        st.code("message_type: string (optional) [default: all]")
+                        st.code("last_n_messages: integer (optional) [default: 10]") 
+                        st.code("search_query: string (optional)")
+                        st.info("💡 This tool allows the agent to access its conversation history when memory is enabled.")
+                    else:
+                        # Find the selected MCP tool
+                        selected_tool = next((tool for tool in st.session_state.tools if tool.name == selected_tool_name), None)
                         
-                        # Display parameters if available
-                        if hasattr(selected_tool, 'args_schema'):
-                            st.write("**Parameters:**")
+                        if selected_tool:
+                            # Display tool information
+                            st.write(f"**Description:** {selected_tool.description}")
                             
-                            # Get schema properties directly from the tool
-                            schema = getattr(selected_tool, 'args_schema', {})
-                            if isinstance(schema, dict):
-                                properties = schema.get('properties', {})
-                                required = schema.get('required', [])
-                            else:
-                                # Handle Pydantic schema
-                                schema_dict = schema.schema()
-                                properties = schema_dict.get('properties', {})
-                                required = schema_dict.get('required', [])
-
-                            # Display each parameter with its details
-                            for param_name, param_info in properties.items():
-                                # Get parameter details
-                                param_type = param_info.get('type', 'string')
-                                param_title = param_info.get('title', param_name)
-                                param_default = param_info.get('default', None)
-                                is_required = param_name in required
-
-                                # Build parameter description
-                                param_desc = [
-                                    f"{param_title}:",
-                                    f"{param_type}",
-                                    "(required)" if is_required else "(optional)"
-                                ]
+                            # Display parameters if available
+                            if hasattr(selected_tool, 'args_schema'):
+                                st.write("**Parameters:**")
                                 
-                                if param_default is not None:
-                                    param_desc.append(f"[default: {param_default}]")
+                                # Get schema properties directly from the tool
+                                schema = getattr(selected_tool, 'args_schema', {})
+                                if isinstance(schema, dict):
+                                    properties = schema.get('properties', {})
+                                    required = schema.get('required', [])
+                                else:
+                                    # Handle Pydantic schema
+                                    schema_dict = schema.schema()
+                                    properties = schema_dict.get('properties', {})
+                                    required = schema_dict.get('required', [])
 
-                                # Display parameter info
-                                st.code(" ".join(param_desc))
+                                # Display each parameter with its details
+                                for param_name, param_info in properties.items():
+                                    # Get parameter details
+                                    param_type = param_info.get('type', 'string')
+                                    param_title = param_info.get('title', param_name)
+                                    param_default = param_info.get('default', None)
+                                    is_required = param_name in required
+
+                                    # Build parameter description
+                                    param_desc = [
+                                        f"{param_title}:",
+                                        f"{param_type}",
+                                        "(required)" if is_required else "(optional)"
+                                    ]
+                                    
+                                    if param_default is not None:
+                                        param_desc.append(f"[default: {param_default}]")
+
+                                    # Display parameter info
+                                    st.code(" ".join(param_desc))
+            else:
+                st.info("💬 In Chat-Only mode - no external tools available")
 
 # Function to display tool execution details
 def display_tool_executions():
@@ -749,10 +825,13 @@ def tab_chat():
     
     with col1:
         connection_status = st.empty()
-        if st.session_state.client is not None:
-            connection_status.success("📶 Connected to MCP server(s)")
+        if st.session_state.agent is not None:
+            if st.session_state.client is not None:
+                connection_status.success("📶 Connected to MCP server(s)")
+            else:
+                connection_status.info("💬 Chat-only mode (No MCP server)")
         else:
-            connection_status.warning("⚠️ Not connected to any MCP server")
+            connection_status.warning("⚠️ Agent not initialized")
     
     with col2:
         memory_status = st.empty()
@@ -779,7 +858,7 @@ def tab_chat():
         
         # Check if agent is set up
         if st.session_state.agent is None:
-            st.error("Please connect to an MCP server first")
+            st.error("Please initialize an agent first (either connect to an MCP server or start chat-only mode)")
         else:
             with st.chat_message("assistant"):
                 with st.spinner("Thinking..."):
