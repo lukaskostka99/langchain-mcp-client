@@ -935,27 +935,117 @@ def render_export_current_action():
 
 def render_import_memory_action():
     """Render import memory action."""
-    uploaded_file = st.file_uploader("📁 Import Memory", type=['json'])
+    uploaded_file = st.file_uploader("📁 Import Memory", type=['json'], key="memory_import_uploader")
+    
     if uploaded_file is not None:
         try:
+            # Parse the file but don't import yet
             memory_data = json.load(uploaded_file)
+            
+            # Validate and preview the memory data
             if 'chat_history' in memory_data:
-                st.session_state.chat_history = memory_data['chat_history']
-                if 'memory_settings' in memory_data:
-                    settings = memory_data['memory_settings']
-                    st.session_state.memory_enabled = settings.get('memory_enabled', True)
-                    st.session_state.memory_type = settings.get('memory_type', 'Short-term')
-                    st.session_state.max_messages = settings.get('max_messages', 100)
-                st.success(f"Imported {len(memory_data['chat_history'])} messages")
-                st.rerun()
+                chat_history = memory_data['chat_history']
+                memory_settings = memory_data.get('memory_settings', {})
+                
+                # Show preview information
+                st.info(f"📋 **Memory File Preview:**")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write(f"• **Messages:** {len(chat_history)}")
+                    st.write(f"• **Thread ID:** {memory_data.get('thread_id', 'default')}")
+                with col2:
+                    st.write(f"• **Memory Type:** {memory_settings.get('memory_type', 'Unknown')}")
+                    st.write(f"• **Max Messages:** {memory_settings.get('max_messages', 'Unknown')}")
+                
+                # Show first few messages as preview
+                if len(chat_history) > 0:
+                    with st.expander("📝 Preview First Few Messages"):
+                        for i, msg in enumerate(chat_history[:3]):
+                            role_icon = "👤" if msg.get('role') == 'user' else "🤖"
+                            content_preview = str(msg.get('content', ''))[:100] + "..." if len(str(msg.get('content', ''))) > 100 else str(msg.get('content', ''))
+                            st.write(f"**{role_icon} {msg.get('role', 'unknown').title()}:** {content_preview}")
+                        
+                        if len(chat_history) > 3:
+                            st.write(f"... and {len(chat_history) - 3} more messages")
+                
+                # Warning about current chat history
+                current_history_count = len(st.session_state.get('chat_history', []))
+                if current_history_count > 0:
+                    st.warning(f"⚠️ This will replace your current chat history ({current_history_count} messages)")
+                
+                # Confirmation buttons
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("✅ Confirm Import", type="primary", key="confirm_import_btn"):
+                        # Actually perform the import
+                        st.session_state.chat_history = chat_history
+                        
+                        # Apply memory settings if available
+                        if memory_settings:
+                            if 'memory_enabled' in memory_settings:
+                                st.session_state.memory_enabled = memory_settings['memory_enabled']
+                            if 'memory_type' in memory_settings:
+                                st.session_state.memory_type = memory_settings['memory_type']
+                            if 'max_messages' in memory_settings:
+                                st.session_state.max_messages = memory_settings['max_messages']
+                        
+                        # Apply thread ID if available
+                        if 'thread_id' in memory_data:
+                            st.session_state.thread_id = memory_data['thread_id']
+                        
+                        st.success(f"✅ Successfully imported {len(chat_history)} messages!")
+                        st.rerun()
+                
+                with col2:
+                    if st.button("❌ Cancel", key="cancel_import_btn"):
+                        st.info("Import cancelled")
+                        st.rerun()
+                        
             elif 'messages' in memory_data:
-                st.session_state.chat_history = memory_data['messages']
-                st.success(f"Imported {len(memory_data['messages'])} messages")
-                st.rerun()
+                # Handle alternative format
+                messages = memory_data['messages']
+                
+                st.info(f"📋 **Legacy Memory File Preview:**")
+                st.write(f"• **Messages:** {len(messages)}")
+                
+                # Show preview
+                if len(messages) > 0:
+                    with st.expander("📝 Preview First Few Messages"):
+                        for i, msg in enumerate(messages[:3]):
+                            role_icon = "👤" if msg.get('role') == 'user' else "🤖"
+                            content_preview = str(msg.get('content', ''))[:100] + "..." if len(str(msg.get('content', ''))) > 100 else str(msg.get('content', ''))
+                            st.write(f"**{role_icon} {msg.get('role', 'unknown').title()}:** {content_preview}")
+                        
+                        if len(messages) > 3:
+                            st.write(f"... and {len(messages) - 3} more messages")
+                
+                # Warning about current chat history
+                current_history_count = len(st.session_state.get('chat_history', []))
+                if current_history_count > 0:
+                    st.warning(f"⚠️ This will replace your current chat history ({current_history_count} messages)")
+                
+                # Confirmation buttons
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("✅ Confirm Import", type="primary", key="confirm_legacy_import_btn"):
+                        st.session_state.chat_history = messages
+                        st.success(f"✅ Successfully imported {len(messages)} messages!")
+                        st.rerun()
+                
+                with col2:
+                    if st.button("❌ Cancel", key="cancel_legacy_import_btn"):
+                        st.info("Import cancelled")
+                        st.rerun()
+                        
             else:
-                st.error("Invalid memory export file")
+                st.error("❌ Invalid memory export file - no 'chat_history' or 'messages' found")
+                
+        except json.JSONDecodeError:
+            st.error("❌ Invalid JSON file")
         except Exception as e:
-            st.error(f"Error importing memory: {str(e)}")
+            st.error(f"❌ Error reading memory file: {str(e)}")
+    else:
+        st.info("Select a memory export file (.json) to preview and import")
 
 
 def render_conversation_history_section():
@@ -1097,14 +1187,17 @@ def render_config_tab():
     
     # Configuration sections
     render_config_overview()
+    st.divider()
     render_system_prompt_section()
+    st.divider()
     render_model_parameters_section()
+    st.divider()
     render_config_management_section()
 
 
 def render_config_overview():
     """Render configuration overview."""
-    st.subheader("📋 Configuration Overview")
+    st.subheader("Configuration Overview")
     
     current_provider = st.session_state.get('llm_provider', 'Not Selected')
     current_model = st.session_state.get('selected_model', 'Not Selected')
@@ -1119,11 +1212,129 @@ def render_config_overview():
         use_custom = st.session_state.get('config_use_custom_settings', False)
         st.metric("Custom Config", "Enabled" if use_custom else "Disabled")
     
+    # Configuration status and apply button
+    render_config_status_and_apply()
+    
     # Provider capability overview
     if current_provider != 'Not Selected':
-        with st.expander("📊 Provider Capabilities"):
+        with st.expander("Provider Capabilities"):
             capabilities = get_provider_capabilities(current_provider)
             render_provider_capabilities(capabilities)
+
+def render_config_status_and_apply():
+    """Render configuration status and apply button."""
+    # Check if configuration has changed
+    config_changed = check_config_changed()
+    agent_exists = st.session_state.get('agent') is not None
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        if agent_exists:
+            if st.session_state.get('config_applied', False) and not config_changed:
+                st.success("✅ Current configuration is applied to the agent")
+            elif config_changed:
+                st.warning("⚠️ Configuration changed - click 'Apply Configuration' to update the agent")
+            else:
+                st.info("ℹ️ Agent is using default configuration")
+        else:
+            st.info("ℹ️ No agent connected - connect to MCP server or start chat-only mode first")
+    
+    with col2:
+        apply_disabled = not agent_exists or (not config_changed and st.session_state.get('config_applied', False))
+        
+        if st.button(
+            "🔄 Apply Configuration", 
+            type="primary",
+            disabled=apply_disabled,
+            help="Apply current configuration settings to the agent"
+        ):
+            apply_configuration_to_agent()
+
+def check_config_changed() -> bool:
+    """Check if configuration has changed since last application."""
+    if not st.session_state.get('config_applied', False):
+        return True
+    
+    # Compare current config with last applied config
+    current_config = get_current_config_snapshot()
+    last_applied = st.session_state.get('last_applied_config', {})
+    
+    return current_config != last_applied
+
+
+def get_current_config_snapshot() -> Dict:
+    """Get a snapshot of current configuration for comparison."""
+    return {
+        'use_custom_settings': st.session_state.get('config_use_custom_settings', False),
+        'system_prompt': st.session_state.get('config_system_prompt', ''),
+        'temperature': st.session_state.get('config_temperature', 0.7),
+        'max_tokens': st.session_state.get('config_max_tokens'),
+        'timeout': st.session_state.get('config_timeout'),
+        'provider': st.session_state.get('llm_provider', ''),
+        'model': st.session_state.get('selected_model', '')
+    }
+
+
+def apply_configuration_to_agent():
+    """Apply current configuration to the agent by recreating it."""
+    try:
+        with st.spinner("Applying configuration to agent..."):
+            # Import here to avoid circular imports
+            from .ui_components import create_and_configure_agent
+            
+            # Get current LLM and memory configuration
+            llm_config = {
+                "provider": st.session_state.get('llm_provider', ''),
+                "api_key": st.session_state.get('api_key', ''),  # This might need to be handled differently
+                "model": st.session_state.get('selected_model', '')
+            }
+            
+            memory_config = {
+                "enabled": st.session_state.get('memory_enabled', False),
+                "type": st.session_state.get('memory_type', 'Short-term (Session)'),
+                "thread_id": st.session_state.get('thread_id', 'default')
+            }
+            
+            # Get current MCP tools
+            mcp_tools = st.session_state.get('tools', [])
+            
+            # We need to get the API key from the current agent or ask user to reconnect
+            if not llm_config["api_key"] and st.session_state.get('agent'):
+                st.warning("⚠️ Cannot apply configuration - API key not available. Please reconnect to MCP server or restart chat-only mode with your new configuration.")
+                return
+            
+            # Recreate agent with new configuration
+            success = create_and_configure_agent(llm_config, memory_config, mcp_tools)
+            
+            if success:
+                # Mark configuration as applied
+                st.session_state.config_applied = True
+                st.session_state.last_applied_config = get_current_config_snapshot()
+                
+                config_summary = []
+                if st.session_state.get('config_use_custom_settings', False):
+                    config_summary.append("✅ Custom system prompt applied")
+                    config_summary.append(f"✅ Temperature: {st.session_state.get('config_temperature', 0.7)}")
+                    if st.session_state.get('config_max_tokens'):
+                        config_summary.append(f"✅ Max tokens: {st.session_state.get('config_max_tokens')}")
+                    if st.session_state.get('config_timeout'):
+                        config_summary.append(f"✅ Timeout: {st.session_state.get('config_timeout')}s")
+                else:
+                    config_summary.append("✅ Default configuration applied")
+                
+                st.success("🎉 Configuration successfully applied to agent!")
+                with st.expander("📋 Applied Settings"):
+                    for item in config_summary:
+                        st.write(item)
+                
+                st.rerun()
+            else:
+                st.error("❌ Failed to apply configuration. Please check your settings and try again.")
+                
+    except Exception as e:
+        st.error(f"❌ Error applying configuration: {str(e)}")
+        st.info("💡 Tip: Try reconnecting to your MCP server or restarting chat-only mode to apply the new configuration.")
 
 
 def get_provider_capabilities(provider: str) -> Dict:
@@ -1157,7 +1368,7 @@ def render_provider_capabilities(capabilities: Dict):
 
 def render_system_prompt_section():
     """Render system prompt configuration section."""
-    st.subheader("💬 System Prompt Configuration")
+    st.subheader("System Prompt Configuration")
     
     current_provider = st.session_state.get('llm_provider', '')
     
@@ -1270,7 +1481,7 @@ Be strategic, analytical, and results-oriented in your responses."""
 
 def render_model_parameters_section():
     """Render model parameters configuration section."""
-    st.subheader("⚙️ Model Parameters")
+    st.subheader("Model Parameters")
     
     current_provider = st.session_state.get('llm_provider', '')
     use_custom = st.session_state.get('config_use_custom_settings', False)
@@ -1396,7 +1607,7 @@ def render_parameter_validation():
 
 def render_config_management_section():
     """Render configuration management section."""
-    st.subheader("💾 Configuration Management")
+    st.subheader("Configuration Management")
     
     col1, col2, col3, col4 = st.columns(4)
     

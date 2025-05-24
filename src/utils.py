@@ -52,6 +52,8 @@ def reset_connection_state():
     st.session_state.client = None
     st.session_state.agent = None
     st.session_state.tools = []
+    # Clear config applied flag when connection is reset
+    st.session_state.config_applied = False
 
 
 def format_timestamp(timestamp=None) -> str:

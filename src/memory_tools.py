@@ -76,25 +76,25 @@ class ConversationHistoryTool(BaseTool):
             last_n_messages = int(last_n_messages) if last_n_messages is not None else 10
             last_n_messages = min(max(1, last_n_messages), 50)
             
-            # Get recent messages
-            recent_messages = st.session_state.chat_history[-last_n_messages:]
+            # Start with all messages
+            all_messages = st.session_state.chat_history
             
-            # Filter by message type
+            # Filter by message type FIRST (before limiting by count)
             filtered_messages = []
             if message_type != "all":
                 if message_type == "tool":
                     # Show messages that have tool executions
-                    for msg in recent_messages:
+                    for msg in all_messages:
                         if (msg.get("role") == "assistant" and 
                             msg.get("tool") is not None and 
                             str(msg.get("tool")).strip()):
                             filtered_messages.append(msg)
                 else:
-                    for msg in recent_messages:
+                    for msg in all_messages:
                         if msg.get("role") == message_type:
                             filtered_messages.append(msg)
             else:
-                filtered_messages = recent_messages
+                filtered_messages = all_messages
             
             # Apply search filter if provided
             if search_query and search_query.strip():
@@ -107,23 +107,26 @@ class ConversationHistoryTool(BaseTool):
                         search_filtered.append(msg)
                 filtered_messages = search_filtered
             
-            if not filtered_messages:
+            # NOW take the last N messages from the filtered list
+            recent_filtered_messages = filtered_messages[-last_n_messages:] if filtered_messages else []
+            
+            if not recent_filtered_messages:
                 return f"No messages found matching your criteria (type: {message_type}, search: '{search_query or 'none'}')"
             
             # Format the history in a clean, readable way
             formatted_history = []
-            formatted_history.append(f"📋 **Conversation History** ({len(filtered_messages)} message{'s' if len(filtered_messages) != 1 else ''})")
+            formatted_history.append(f"📋 Conversation History ({len(recent_filtered_messages)} message{'s' if len(recent_filtered_messages) != 1 else ''})")
             formatted_history.append("")
             
-            for i, msg in enumerate(filtered_messages, 1):
+            for i, msg in enumerate(recent_filtered_messages, 1):
                 role = msg.get("role", "unknown")
                 content = str(msg.get("content", "")).strip()
                 tool_output = msg.get("tool")
                 
                 if role == "user":
-                    formatted_history.append(f"**{i}. User:** {content}")
+                    formatted_history.append(f"{i}. User: {content}")
                 elif role == "assistant":
-                    formatted_history.append(f"**{i}. Assistant:** {content}")
+                    formatted_history.append(f"{i}. Assistant: {content}")
                     if tool_output and str(tool_output).strip():
                         # Show a summary of tool execution instead of full output
                         tool_lines = str(tool_output).strip().split('\n')

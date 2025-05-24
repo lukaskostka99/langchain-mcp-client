@@ -70,6 +70,10 @@ def render_llm_configuration() -> Dict:
         disabled=api_key_disabled
     )
     
+    # Store API key in session state for Config tab (only if not disabled)
+    if not api_key_disabled:
+        st.session_state.api_key = api_key
+    
     # Model selection
     model_options = get_provider_models(llm_provider)
     default_model = get_default_model(llm_provider)
