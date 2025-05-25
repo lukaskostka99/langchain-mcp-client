@@ -1300,7 +1300,8 @@ def apply_configuration_to_agent():
             mcp_tools = st.session_state.get('tools', [])
             
             # We need to get the API key from the current agent or ask user to reconnect
-            if not llm_config["api_key"] and st.session_state.get('agent'):
+            # For Ollama, we don't need an API key
+            if not llm_config["api_key"] and llm_config["provider"] != "Ollama" and st.session_state.get('agent'):
                 st.warning("⚠️ Cannot apply configuration - API key not available. Please reconnect to MCP server or restart chat-only mode with your new configuration.")
                 return
             
@@ -1622,6 +1623,29 @@ def render_config_management_section():
     
     with col4:
         render_export_config_action()
+    
+    # Debug options
+    with st.expander("🔧 Debug Options"):
+        debug_system_prompt = st.checkbox(
+            "Debug System Prompt",
+            value=st.session_state.get('debug_system_prompt', False),
+            help="Enable debug logging for system prompt troubleshooting"
+        )
+        st.session_state.debug_system_prompt = debug_system_prompt
+        
+        if debug_system_prompt:
+            st.info("🔧 Debug mode enabled. System prompt modifier calls will be logged in the chat interface.")
+        
+        # Additional debug info
+        if st.button("📊 Show Debug Info"):
+            debug_info = {
+                "session_state_keys": list(st.session_state.keys()),
+                "agent_exists": st.session_state.get('agent') is not None,
+                "config_applied": st.session_state.get('config_applied', False),
+                "use_custom_settings": st.session_state.get('config_use_custom_settings', False),
+                "system_prompt_length": len(st.session_state.get('config_system_prompt', '')) if st.session_state.get('config_system_prompt') else 0
+            }
+            st.json(debug_info)
 
 
 def render_save_config_action():

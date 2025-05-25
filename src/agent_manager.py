@@ -26,6 +26,32 @@ async def run_tool(tool, **kwargs):
     return await tool.ainvoke(kwargs)
 
 
+def create_system_prompt_modifier(system_prompt: str):
+    """
+    Create a state modifier function that adds a system prompt to the beginning of messages.
+    
+    Args:
+        system_prompt: The system prompt text to add
+    
+    Returns:
+        A state modifier function for LangGraph
+    """
+    def state_modifier(state):
+        """Add system prompt to the beginning of the message sequence."""
+        messages = state.get("messages", [])
+        
+        # Debug logging (can be removed in production)
+        if hasattr(st, 'session_state') and st.session_state.get('debug_system_prompt', False):
+            st.write(f"🔧 System prompt modifier called with {len(messages)} messages")
+            st.write(f"🔧 Adding system prompt: {system_prompt[:100]}...")
+        
+        # Convert messages to the format expected by LangGraph
+        # Always add the system prompt at the beginning
+        return [{"role": "system", "content": system_prompt}] + messages
+    
+    return state_modifier
+
+
 def create_agent_with_tools(
     llm,
     mcp_tools: List[BaseTool],
@@ -67,7 +93,14 @@ def create_agent_with_tools(
     
     # Create the agent with optional system prompt
     if system_prompt:
-        agent = create_react_agent(llm, agent_tools, checkpointer=checkpointer, prompt=system_prompt)
+        # Create a state modifier that adds the system prompt
+        state_modifier = create_system_prompt_modifier(system_prompt)
+        agent = create_react_agent(
+            llm, 
+            agent_tools, 
+            checkpointer=checkpointer, 
+            state_modifier=state_modifier
+        )
     else:
         agent = create_react_agent(llm, agent_tools, checkpointer=checkpointer)
     
