@@ -205,7 +205,7 @@ def handle_chat_error(error: Exception):
     error_msg = str(error)
     
     # Check for Ollama connection error
-    if "ConnectError: All connection attempts failed" in error_msg:
+    if "All connection attempts failed" in error_msg:
         st.error("⚠️ Could not connect to Ollama. Please make sure Ollama is running by executing 'ollama serve' in a terminal.")
         st.info("To start Ollama, open a terminal/command prompt and run: `ollama serve`")
     else:
