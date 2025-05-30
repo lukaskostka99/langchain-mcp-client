@@ -8,52 +8,204 @@ and other shared functionality.
 import asyncio
 import json
 import datetime
+import contextvars
 from typing import Any, Dict, List
 import streamlit as st
 
 
 def run_async(coro):
-    """Run an async function within the stored event loop."""
-    return st.session_state.loop.run_until_complete(coro)
+    """
+    Run an async function with improved context management and timeout protection.
+    
+    This function handles context conflicts that can occur with external
+    MCP servers, especially when using SSE connections.
+    """
+    try:
+        # First, try the simple approach if we have a stored loop
+        if hasattr(st.session_state, 'loop') and st.session_state.loop:
+            try:
+                # Add a timeout to prevent infinite hanging
+                future = asyncio.wait_for(coro, timeout=300.0)  # 5 minute max timeout
+                return st.session_state.loop.run_until_complete(future)
+            except (RuntimeError, asyncio.TimeoutError) as e:
+                if "cannot enter context" in str(e) or "already entered" in str(e):
+                    # Context conflict, try alternative approach
+                    pass
+                elif "TimeoutError" in str(type(e).__name__):
+                    raise TimeoutError("Operation timed out after 5 minutes") from e
+                else:
+                    # For other RuntimeErrors, try alternative approach
+                    pass
+        
+        # Alternative approach: Check if we're in an async context
+        try:
+            # Try to get the current running loop
+            current_loop = asyncio.get_running_loop()
+            if current_loop and current_loop.is_running():
+                # We're in an async context - use asyncio.run with timeout
+                return _run_with_timeout_and_new_loop(coro, timeout=300.0)
+            else:
+                # No running loop, safe to create one
+                return _run_with_timeout_and_new_loop(coro, timeout=300.0)
+        except RuntimeError:
+            # No running loop, safe to create one
+            return _run_with_timeout_and_new_loop(coro, timeout=300.0)
+            
+    except Exception as e:
+        st.error(f"Error in async execution: {str(e)}")
+        raise
+
+
+def _run_with_timeout_and_new_loop(coro, timeout: float = 300.0):
+    """Create a new event loop and run the coroutine with timeout."""
+    import threading
+    import time
+    
+    result = None
+    error = None
+    completed = threading.Event()
+    
+    def run_in_thread():
+        nonlocal result, error
+        try:
+            # Create completely isolated loop
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            try:
+                # Run with timeout
+                future = asyncio.wait_for(coro, timeout=timeout)
+                result = new_loop.run_until_complete(future)
+            finally:
+                new_loop.close()
+                asyncio.set_event_loop(None)
+        except Exception as e:
+            error = e
+        finally:
+            completed.set()
+    
+    # Run in a separate thread to avoid context conflicts
+    thread = threading.Thread(target=run_in_thread, daemon=True)
+    thread.start()
+    
+    # Wait for completion with timeout
+    if completed.wait(timeout + 10):  # Extra 10 seconds for thread overhead
+        if error:
+            raise error
+        return result
+    else:
+        st.error("Operation timed out - the MCP server may be unresponsive")
+        raise TimeoutError(f"Operation timed out after {timeout} seconds")
 
 
 def initialize_session_state():
-    """Initialize all session state variables with their default values."""
-    defaults = {
-        "client": None,
-        "agent": None,
-        "tools": [],
-        "chat_history": [],
-        "servers": {},
-        "current_tab": "Single Server",
-        "tool_executions": [],
-        "tool_test_results": [],
-        "tool_test_stats": {},
-        "memory_enabled": False,
-        "memory_type": "Short-term (Session)",
-        "thread_id": "default",
-        "max_messages": 100,
-        "checkpointer": None,
-    }
+    """Initialize session state variables with improved async handling."""
+    # Initialize basic session state
+    if 'chat_history' not in st.session_state:
+        st.session_state.chat_history = []
     
-    # Initialize event loop if not exists
-    if "loop" not in st.session_state:
-        st.session_state.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(st.session_state.loop)
+    if 'tools' not in st.session_state:
+        st.session_state.tools = []
     
-    # Set defaults for any missing session state variables
-    for key, default_value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = default_value
+    if 'tool_executions' not in st.session_state:
+        st.session_state.tool_executions = []
+    
+    if 'agent' not in st.session_state:
+        st.session_state.agent = None
+    
+    if 'client' not in st.session_state:
+        st.session_state.client = None
+    
+    if 'checkpointer' not in st.session_state:
+        st.session_state.checkpointer = None
+    
+    if 'servers' not in st.session_state:
+        st.session_state.servers = {}
+    
+    # Initialize event loop with better error handling
+    if 'loop' not in st.session_state:
+        try:
+            # Try to get the current loop
+            st.session_state.loop = asyncio.get_event_loop()
+        except RuntimeError:
+            # If no loop exists, create a new one
+            try:
+                st.session_state.loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(st.session_state.loop)
+            except Exception as e:
+                st.warning(f"Could not create event loop: {str(e)}. Will create on-demand loops.")
+                st.session_state.loop = None
 
 
 def reset_connection_state():
-    """Reset all connection-related session state variables."""
-    st.session_state.client = None
+    """Reset connection-related session state."""
     st.session_state.agent = None
+    st.session_state.client = None
     st.session_state.tools = []
-    # Clear config applied flag when connection is reset
-    st.session_state.config_applied = False
+    st.session_state.checkpointer = None
+
+
+def create_download_data(data: Dict, prefix: str = "export") -> tuple[str, str]:
+    """Create downloadable JSON data."""
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{prefix}_{timestamp}.json"
+    json_str = json.dumps(data, indent=2)
+    return json_str, filename
+
+
+def is_valid_thread_id(thread_id: str) -> bool:
+    """Validate thread ID format."""
+    if not thread_id or not isinstance(thread_id, str):
+        return False
+    
+    # Basic validation - alphanumeric, underscores, hyphens
+    import re
+    return bool(re.match(r'^[a-zA-Z0-9_-]+$', thread_id)) and len(thread_id) <= 100
+
+
+def format_error_message(error: Exception) -> str:
+    """Format error message for display."""
+    error_msg = str(error)
+    
+    # Handle common MCP/SSE errors
+    if "cannot enter context" in error_msg or "already entered" in error_msg:
+        return "Connection context conflict. This often happens with external MCP servers. The connection has been retried with a new context."
+    elif "All connection attempts failed" in error_msg:
+        return "Failed to connect to the MCP server. Please check that the server is running and accessible."
+    elif "timeout" in error_msg.lower():
+        return "Connection timed out. The MCP server may be overloaded or unreachable."
+    else:
+        return error_msg
+
+
+def safe_async_call(coro, error_message: str = "Async operation failed", timeout: float = 300.0):
+    """
+    Safely call an async function with improved error handling and timeout.
+    
+    Args:
+        coro: The coroutine to execute
+        error_message: Custom error message prefix
+        timeout: Maximum time to wait in seconds
+    
+    Returns:
+        Result of the coroutine or None if failed
+    """
+    try:
+        # Add timeout wrapper to the coroutine
+        timeout_coro = asyncio.wait_for(coro, timeout=timeout)
+        return run_async(timeout_coro)
+    except asyncio.TimeoutError:
+        st.error(f"{error_message}: Operation timed out after {timeout} seconds")
+        st.info("💡 The server may be overloaded or unreachable. Try again or check the server status.")
+        return None
+    except Exception as e:
+        formatted_error = format_error_message(e)
+        st.error(f"{error_message}: {formatted_error}")
+        
+        # Show additional context for debugging
+        if "cannot enter context" in str(e) or "already entered" in str(e):
+            st.info("🔄 Context conflict detected - this is handled automatically")
+        
+        return None
 
 
 def format_timestamp(timestamp=None) -> str:
@@ -148,23 +300,6 @@ def safe_get_nested(dictionary: dict, keys: List[str], default=None):
         return default
 
 
-def create_download_data(data: Any, filename_prefix: str = "export") -> tuple[str, str]:
-    """
-    Create downloadable data and filename.
-    
-    Args:
-        data: Data to export
-        filename_prefix: Prefix for the filename
-    
-    Returns:
-        Tuple of (json_string, filename)
-    """
-    timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-    filename = f"{filename_prefix}_{timestamp}.json"
-    json_str = json.dumps(data, indent=2, default=str)
-    return json_str, filename
-
-
 def count_tokens_roughly(text: str) -> int:
     """
     Roughly estimate token count (4 characters per token).
@@ -176,26 +311,6 @@ def count_tokens_roughly(text: str) -> int:
         Estimated token count
     """
     return len(text) // 4
-
-
-def is_valid_thread_id(thread_id: str) -> bool:
-    """
-    Validate if a thread ID is valid.
-    
-    Args:
-        thread_id: Thread ID to validate
-    
-    Returns:
-        True if valid, False otherwise
-    """
-    if not thread_id or not isinstance(thread_id, str):
-        return False
-    
-    # Basic validation - no spaces, not too long
-    if len(thread_id) > 100 or ' ' in thread_id:
-        return False
-    
-    return True
 
 
 def get_system_info() -> Dict[str, Any]:

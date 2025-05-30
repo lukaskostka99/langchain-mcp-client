@@ -17,7 +17,7 @@ from .agent_manager import (
     extract_tool_executions_from_response, extract_assistant_response
 )
 from .memory_tools import calculate_chat_statistics, format_chat_history_for_export
-from .utils import run_async, create_download_data
+from .utils import run_async, create_download_data, safe_async_call, format_error_message
 from .database import PersistentStorageManager
 from .llm_providers import (
     get_available_providers, supports_system_prompt, get_default_temperature,
@@ -89,7 +89,7 @@ def handle_chat_input():
 
 
 def process_user_message(user_input: str):
-    """Process user message through the agent."""
+    """Process user message through the agent with improved context management."""
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             try:
@@ -99,20 +99,33 @@ def process_user_message(user_input: str):
                     thread_id=st.session_state.get('thread_id', 'default')
                 )
                 
-                # Run the agent - always use the same approach for consistency
+                # Run the agent with context isolation and shorter timeout
                 if config:
-                    # For memory-enabled agents, pass the message properly formatted
-                    response = run_async(st.session_state.agent.ainvoke({"messages": [HumanMessage(user_input)]}, config))
+                    # For memory-enabled agents, use safe async call with reasonable timeout
+                    response = safe_async_call(
+                        st.session_state.agent.ainvoke({"messages": [HumanMessage(user_input)]}, config),
+                        "Failed to process message with memory",
+                        timeout=120.0  # 2 minutes timeout for chat responses
+                    )
                 else:
-                    # For agents without memory, use the simple approach
-                    response = run_async(run_agent(st.session_state.agent, user_input))
+                    # For agents without memory, use safe async call with shorter timeout
+                    response = safe_async_call(
+                        run_agent(st.session_state.agent, user_input),
+                        "Failed to process message",
+                        timeout=60.0  # 1 minute timeout for simple chat
+                    )
+                
+                if response is None:
+                    st.error("❌ Failed to get response from agent. Please try again.")
+                    st.info("💡 If this persists, try refreshing the page or reconnecting to the MCP server.")
+                    return
                 
                 # Process response
                 tool_executions = extract_tool_executions_from_response(response)
                 assistant_response = extract_assistant_response(response)
                 
                 # Debug: Show the response structure when memory is enabled
-                if st.session_state.get('memory_enabled', False):
+                if st.session_state.get('memory_enabled', False) and st.session_state.get('debug_system_prompt', False):
                     with st.expander("🔍 Debug: Raw Agent Response", expanded=False):
                         st.write("**Number of messages in response:**", len(response.get("messages", [])))
                         st.write("**Message types:**")
@@ -201,15 +214,25 @@ def apply_message_trimming():
 
 
 def handle_chat_error(error: Exception):
-    """Handle errors during chat processing."""
-    error_msg = str(error)
+    """Handle errors during chat processing with improved messaging."""
+    formatted_error = format_error_message(error)
     
-    # Check for Ollama connection error
+    # Check for specific error types for better user guidance
+    error_msg = str(error)
     if "All connection attempts failed" in error_msg:
         st.error("⚠️ Could not connect to Ollama. Please make sure Ollama is running by executing 'ollama serve' in a terminal.")
         st.info("To start Ollama, open a terminal/command prompt and run: `ollama serve`")
+    elif "cannot enter context" in error_msg or "already entered" in error_msg:
+        st.error("🔄 Context conflict detected. Retrying with isolated context...")
+        st.info("💡 This can happen with external MCP servers. The system will handle this automatically.")
+    elif "timeout" in error_msg.lower():
+        st.error("⏱️ Request timed out. The server may be overloaded or unreachable.")
+        st.info("💡 Try again in a moment, or check your MCP server connection.")
     else:
-        st.error(f"Error processing your request: {error_msg}")
+        st.error(f"❌ Error processing your request: {formatted_error}")
+    
+    # Show technical details in expandable section
+    with st.expander("🔧 Technical Details"):
         st.code(traceback.format_exc(), language="python")
 
 

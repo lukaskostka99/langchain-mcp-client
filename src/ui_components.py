@@ -26,7 +26,7 @@ from .agent_manager import (
     prepare_agent_invocation_config
 )
 from .memory_tools import create_history_tool, calculate_chat_statistics
-from .utils import run_async, reset_connection_state
+from .utils import run_async, reset_connection_state, safe_async_call, format_error_message
 
 
 def render_sidebar():
@@ -390,7 +390,7 @@ def render_chat_only_config(llm_config: Dict, memory_config: Dict) -> Dict:
 
 
 def handle_single_server_connection(llm_config: Dict, memory_config: Dict, server_url: str) -> Dict:
-    """Handle single server connection logic."""
+    """Handle single server connection logic with improved error handling."""
     if not llm_config["api_key"] and requires_api_key(llm_config["provider"]):
         st.error(f"Please enter your {llm_config['provider']} API Key")
         return {"mode": "single", "connected": False}
@@ -398,34 +398,93 @@ def handle_single_server_connection(llm_config: Dict, memory_config: Dict, serve
         st.error("Please enter a valid MCP Server URL")
         return {"mode": "single", "connected": False}
     
-    with st.spinner("Connecting to MCP server..."):
-        try:
-            # Setup server configuration
-            server_config = create_single_server_config(server_url)
-            
-            # Initialize the MCP client
-            st.session_state.client = run_async(setup_mcp_client(server_config))
-            
-            # Get tools from the client
-            st.session_state.tools = run_async(get_tools_from_client(st.session_state.client))
-            
-            # Create and configure agent
-            success = create_and_configure_agent(llm_config, memory_config, st.session_state.tools)
-            
-            if success:
-                st.success(f"Connected to MCP server! Found {len(st.session_state.tools)} tools.")
-                return {"mode": "single", "connected": True}
-            else:
-                return {"mode": "single", "connected": False}
+    # Create progress container
+    progress_container = st.container()
+    
+    with progress_container:
+        with st.spinner("Connecting to MCP server..."):
+            try:
+                # Show progress steps
+                progress_placeholder = st.empty()
                 
-        except Exception as e:
-            st.error(f"Error connecting to MCP server: {str(e)}")
-            st.code(traceback.format_exc(), language="python")
-            return {"mode": "single", "connected": False}
+                # Step 1: Setup configuration
+                progress_placeholder.info("🔧 Setting up server configuration...")
+                server_config = create_single_server_config(
+                    server_url, 
+                    timeout=120,  # 2 minutes for initial connection
+                    sse_read_timeout=300  # 5 minutes for SSE operations
+                )
+                
+                # Step 2: Initialize client
+                progress_placeholder.info("🌐 Initializing MCP client...")
+                client = safe_async_call(
+                    setup_mcp_client(server_config),
+                    "Failed to initialize MCP client",
+                    timeout=60.0  # 1 minute timeout for client setup
+                )
+                
+                if client is None:
+                    progress_placeholder.error("❌ Failed to initialize MCP client")
+                    return {"mode": "single", "connected": False}
+                
+                st.session_state.client = client
+                
+                # Step 3: Get tools
+                progress_placeholder.info("🔍 Retrieving tools from server...")
+                tools = safe_async_call(
+                    get_tools_from_client(st.session_state.client),
+                    "Failed to retrieve tools from MCP server",
+                    timeout=30.0  # 30 seconds timeout for tool retrieval
+                )
+                
+                if tools is None:
+                    progress_placeholder.error("❌ Failed to retrieve tools")
+                    return {"mode": "single", "connected": False}
+                
+                st.session_state.tools = tools
+                
+                # Step 4: Create agent
+                progress_placeholder.info("🤖 Creating and configuring agent...")
+                success = create_and_configure_agent(llm_config, memory_config, st.session_state.tools)
+                
+                if success:
+                    progress_placeholder.empty()  # Clear progress messages
+                    st.success(f"✅ Connected to MCP server! Found {len(st.session_state.tools)} tools.")
+                    with st.expander("🔧 Connection Details"):
+                        st.write(f"**Server URL:** {server_url}")
+                        st.write(f"**Tools found:** {len(st.session_state.tools)}")
+                        st.write(f"**Connection timeout:** 2 minutes")
+                        st.write(f"**SSE read timeout:** 5 minutes")
+                        if st.session_state.tools:
+                            st.write(f"**Available tools:**")
+                            for tool in st.session_state.tools:
+                                st.write(f"  • {tool.name}")
+                    return {"mode": "single", "connected": True}
+                else:
+                    progress_placeholder.error("❌ Failed to configure agent")
+                    return {"mode": "single", "connected": False}
+                    
+            except Exception as e:
+                formatted_error = format_error_message(e)
+                st.error(f"❌ Error connecting to MCP server: {formatted_error}")
+                
+                # Show additional troubleshooting info
+                with st.expander("🔍 Troubleshooting"):
+                    st.write("**Common solutions:**")
+                    st.write("• Check that the MCP server is running and accessible")
+                    st.write("• Verify the server URL is correct")
+                    st.write("• Try refreshing the page and reconnecting")
+                    st.write("• For external servers, ensure they support SSE connections")
+                    st.write("• Check if the server has rate limiting or requires authentication")
+                    
+                    st.write("**Technical details:**")
+                    st.code(traceback.format_exc(), language="python")
+                
+                return {"mode": "single", "connected": False}
 
 
 def handle_multiple_servers_connection(llm_config: Dict, memory_config: Dict) -> Dict:
-    """Handle multiple servers connection logic."""
+    """Handle multiple servers connection logic with improved error handling."""
     if not llm_config["api_key"] and requires_api_key(llm_config["provider"]):
         st.error(f"Please enter your {llm_config['provider']} API Key")
         return {"mode": "multiple", "connected": False}
@@ -435,24 +494,61 @@ def handle_multiple_servers_connection(llm_config: Dict, memory_config: Dict) ->
     
     with st.spinner("Connecting to MCP servers..."):
         try:
-            # Initialize the MCP client with all servers
-            st.session_state.client = run_async(setup_mcp_client(st.session_state.servers))
+            # Initialize the MCP client with all servers with context isolation
+            client = safe_async_call(
+                setup_mcp_client(st.session_state.servers),
+                "Failed to initialize MCP client for multiple servers"
+            )
             
-            # Get tools from the client
-            st.session_state.tools = run_async(get_tools_from_client(st.session_state.client))
+            if client is None:
+                return {"mode": "multiple", "connected": False}
+            
+            st.session_state.client = client
+            
+            # Get tools from the client with context isolation
+            tools = safe_async_call(
+                get_tools_from_client(st.session_state.client),
+                "Failed to retrieve tools from MCP servers"
+            )
+            
+            if tools is None:
+                return {"mode": "multiple", "connected": False}
+            
+            st.session_state.tools = tools
             
             # Create and configure agent
             success = create_and_configure_agent(llm_config, memory_config, st.session_state.tools)
             
             if success:
-                st.success(f"Connected to {len(st.session_state.servers)} MCP servers! Found {len(st.session_state.tools)} tools.")
+                st.success(f"✅ Connected to {len(st.session_state.servers)} MCP servers! Found {len(st.session_state.tools)} tools.")
+                with st.expander("🔧 Connection Details"):
+                    st.write(f"**Servers connected:** {len(st.session_state.servers)}")
+                    for name, config in st.session_state.servers.items():
+                        st.write(f"  • {name}: {config['url']}")
+                    st.write(f"**Total tools found:** {len(st.session_state.tools)}")
                 return {"mode": "multiple", "connected": True}
             else:
                 return {"mode": "multiple", "connected": False}
                 
         except Exception as e:
-            st.error(f"Error connecting to MCP servers: {str(e)}")
-            st.code(traceback.format_exc(), language="python")
+            formatted_error = format_error_message(e)
+            st.error(f"❌ Error connecting to MCP servers: {formatted_error}")
+            
+            # Show additional troubleshooting info
+            with st.expander("🔍 Troubleshooting"):
+                st.write("**Common solutions:**")
+                st.write("• Check that all MCP servers are running and accessible")
+                st.write("• Verify all server URLs are correct")
+                st.write("• Try connecting to servers individually first")
+                st.write("• For external servers, ensure they support SSE connections")
+                
+                st.write("**Configured servers:**")
+                for name, config in st.session_state.servers.items():
+                    st.write(f"  • {name}: {config['url']}")
+                
+                st.write("**Technical details:**")
+                st.code(traceback.format_exc(), language="python")
+            
             return {"mode": "multiple", "connected": False}
 
 
