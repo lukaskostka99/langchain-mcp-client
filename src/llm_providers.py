@@ -28,7 +28,7 @@ LLM_PROVIDERS = {
         "default_max_tokens": 4096,
         "max_tokens_range": (1, 16384),
         "supports_timeout": True,
-        "default_timeout": 60.0
+        "default_timeout": 600.0
     },
     "Anthropic": {
         "models": ["claude-3-5-sonnet-20240620", "claude-3-opus-20240229", "claude-3-haiku-20240307"],
@@ -41,7 +41,7 @@ LLM_PROVIDERS = {
         "default_max_tokens": 4096,
         "max_tokens_range": (1, 8192),
         "supports_timeout": True,
-        "default_timeout": 60.0
+        "default_timeout": 600.0
     },
     "Google": {
         "models": ["gemini-2.0-flash-001", "gemini-2.5-pro-exp-03-25"],
@@ -54,7 +54,7 @@ LLM_PROVIDERS = {
         "default_max_tokens": 8192,
         "max_tokens_range": (1, 32768),
         "supports_timeout": True,
-        "default_timeout": 60.0,
+        "default_timeout": 600.0,
         "convert_system_to_human": True  # Gemini-specific setting
     },
     "Ollama": {
@@ -68,7 +68,7 @@ LLM_PROVIDERS = {
         "default_max_tokens": 4096,
         "max_tokens_range": (1, 32768),
         "supports_timeout": True,
-        "default_timeout": 120.0
+        "default_timeout": 600.0
     }
 }
 
@@ -135,7 +135,7 @@ def get_max_tokens_range(provider: str) -> Tuple[int, int]:
 
 def get_default_timeout(provider: str) -> float:
     """Get default timeout for a provider."""
-    return LLM_PROVIDERS.get(provider, {}).get("default_timeout", 60.0)
+    return LLM_PROVIDERS.get(provider, {}).get("default_timeout", 600.0)
 
 
 def create_llm_model(

@@ -105,14 +105,14 @@ def process_user_message(user_input: str):
                     response = safe_async_call(
                         st.session_state.agent.ainvoke({"messages": [HumanMessage(user_input)]}, config),
                         "Failed to process message with memory",
-                        timeout=120.0  # 2 minutes timeout for chat responses
+                        timeout=600.0  # 10 minutes timeout for chat responses
                     )
                 else:
                     # For agents without memory, use safe async call with shorter timeout
                     response = safe_async_call(
                         run_agent(st.session_state.agent, user_input),
                         "Failed to process message",
-                        timeout=60.0  # 1 minute timeout for simple chat
+                        timeout=600.0  # 10 minutes timeout for simple chat
                     )
                 
                 if response is None:
@@ -1375,7 +1375,7 @@ def get_provider_capabilities(provider: str) -> Dict:
         "Max Tokens Range": f"{config.get('max_tokens_range', (1, 4096))[0]:,} - {config.get('max_tokens_range', (1, 4096))[1]:,}",
         "Default Temperature": str(config.get('default_temperature', 0.7)),
         "Default Max Tokens": f"{config.get('default_max_tokens', 4096):,}",
-        "Default Timeout": f"{config.get('default_timeout', 60.0)}s",
+        "Default Timeout": f"{config.get('default_timeout', 600.0)}s",
         "API Key Required": "✅" if config.get("requires_api_key", True) else "❌"
     }
 

@@ -411,7 +411,7 @@ def handle_single_server_connection(llm_config: Dict, memory_config: Dict, serve
                 progress_placeholder.info("🔧 Setting up server configuration...")
                 server_config = create_single_server_config(
                     server_url, 
-                    timeout=120,  # 2 minutes for initial connection
+                    timeout=60,  # 1 minute for initial connection
                     sse_read_timeout=300  # 5 minutes for SSE operations
                 )
                 
@@ -434,7 +434,7 @@ def handle_single_server_connection(llm_config: Dict, memory_config: Dict, serve
                 tools = safe_async_call(
                     get_tools_from_client(st.session_state.client),
                     "Failed to retrieve tools from MCP server",
-                    timeout=30.0  # 30 seconds timeout for tool retrieval
+                    timeout=600.0  # 10 minutes timeout for tool retrieval
                 )
                 
                 if tools is None:
@@ -453,7 +453,7 @@ def handle_single_server_connection(llm_config: Dict, memory_config: Dict, serve
                     with st.expander("🔧 Connection Details"):
                         st.write(f"**Server URL:** {server_url}")
                         st.write(f"**Tools found:** {len(st.session_state.tools)}")
-                        st.write(f"**Connection timeout:** 2 minutes")
+                        st.write(f"**Connection timeout:** 1 minute")
                         st.write(f"**SSE read timeout:** 5 minutes")
                         if st.session_state.tools:
                             st.write(f"**Available tools:**")

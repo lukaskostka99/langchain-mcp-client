@@ -21,9 +21,9 @@ This Streamlit application provides a user interface for connecting to MCP (Mode
 ## Configuration System
 
 ### LLM Providers & Parameters
-- **OpenAI**: GPT-4o, GPT-4, GPT-3.5-turbo with temperature (0.0-2.0), max tokens (1-4000), timeout (10-300s)
-- **Anthropic**: Claude models with temperature (0.0-1.0), max tokens (1-4000), timeout (10-300s)  
-- **Google**: Gemini models with temperature (0.0-1.0), max tokens (1-2048), timeout (10-180s)
+- **OpenAI**: GPT-4o, GPT-4, GPT-3.5-turbo with temperature (0.0-2.0), max tokens (1-4000), timeout (10-600s)
+- **Anthropic**: Claude models with temperature (0.0-1.0), max tokens (1-4000), timeout (10-600s)  
+- **Google**: Gemini models with temperature (0.0-1.0), max tokens (1-2048), timeout (10-600s)
 - **Ollama**: Local models with temperature (0.0-1.0), max tokens (1-4000), timeout (10-600s)
 
 ### System Prompts

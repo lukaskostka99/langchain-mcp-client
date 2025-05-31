@@ -17,83 +17,84 @@ def run_async(coro):
     """
     Run an async function with improved context management and timeout protection.
     
-    This function handles context conflicts that can occur with external
-    MCP servers, especially when using SSE connections.
+    This function handles different scenarios:
+    1. When there's no event loop running (first call)
+    2. When there's already an event loop running (nested calls)
+    3. When running in different thread contexts
     """
     try:
-        # First, try the simple approach if we have a stored loop
-        if hasattr(st.session_state, 'loop') and st.session_state.loop:
-            try:
-                # Add a timeout to prevent infinite hanging
-                future = asyncio.wait_for(coro, timeout=300.0)  # 5 minute max timeout
-                return st.session_state.loop.run_until_complete(future)
-            except (RuntimeError, asyncio.TimeoutError) as e:
-                if "cannot enter context" in str(e) or "already entered" in str(e):
-                    # Context conflict, try alternative approach
-                    pass
-                elif "TimeoutError" in str(type(e).__name__):
-                    raise TimeoutError("Operation timed out after 5 minutes") from e
-                else:
-                    # For other RuntimeErrors, try alternative approach
-                    pass
-        
-        # Alternative approach: Check if we're in an async context
+        # Check if we're already in an async context
         try:
-            # Try to get the current running loop
-            current_loop = asyncio.get_running_loop()
-            if current_loop and current_loop.is_running():
-                # We're in an async context - use asyncio.run with timeout
-                return _run_with_timeout_and_new_loop(coro, timeout=300.0)
-            else:
-                # No running loop, safe to create one
-                return _run_with_timeout_and_new_loop(coro, timeout=300.0)
+            loop = asyncio.get_running_loop()
         except RuntimeError:
-            # No running loop, safe to create one
-            return _run_with_timeout_and_new_loop(coro, timeout=300.0)
-            
+            loop = None
+        
+        if loop is None:
+            # No event loop running - create one and run the coroutine
+            # Add a timeout to prevent infinite hanging
+            future = asyncio.wait_for(coro, timeout=600.0)  # 10 minute max timeout
+            return asyncio.run(future)
+        else:
+            # We're in an async context, but need to handle it carefully
+            # Check if we have a stored event loop
+            if hasattr(st.session_state, 'loop') and st.session_state.loop:
+                # We're in an async context - use asyncio.run with timeout
+                return _run_with_timeout_and_new_loop(coro, timeout=600.0)
+            else:
+                # Create new event loop in thread
+                return _run_with_timeout_and_new_loop(coro, timeout=600.0)
+                
+    except (RuntimeError, asyncio.TimeoutError) as e:
+        # Handle specific timeout and context errors
+        if "TimeoutError" in str(type(e).__name__) or "timeout" in str(e).lower():
+            raise TimeoutError("Operation timed out after 10 minutes") from e
+        else:
+            # Context conflict - use alternative approach
+            return _run_with_timeout_and_new_loop(coro, timeout=600.0)
     except Exception as e:
-        st.error(f"Error in async execution: {str(e)}")
-        raise
+        # Fallback: always use new thread
+        return _run_with_timeout_and_new_loop(coro, timeout=600.0)
 
 
-def _run_with_timeout_and_new_loop(coro, timeout: float = 300.0):
+def _run_with_timeout_and_new_loop(coro, timeout: float = 600.0):
     """Create a new event loop and run the coroutine with timeout."""
     import threading
-    import time
-    
-    result = None
-    error = None
+    import queue
+    result_queue = queue.Queue()
+    exception_queue = queue.Queue()
     completed = threading.Event()
     
     def run_in_thread():
-        nonlocal result, error
         try:
-            # Create completely isolated loop
+            # Create new event loop for this thread
             new_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(new_loop)
-            try:
-                # Run with timeout
-                future = asyncio.wait_for(coro, timeout=timeout)
-                result = new_loop.run_until_complete(future)
-            finally:
-                new_loop.close()
-                asyncio.set_event_loop(None)
+            
+            # Run with timeout
+            future = asyncio.wait_for(coro, timeout=timeout)
+            result = new_loop.run_until_complete(future)
+            result_queue.put(result)
         except Exception as e:
-            error = e
+            exception_queue.put(e)
         finally:
+            # Clean up the loop
+            new_loop.close()
             completed.set()
     
-    # Run in a separate thread to avoid context conflicts
-    thread = threading.Thread(target=run_in_thread, daemon=True)
+    # Start thread
+    thread = threading.Thread(target=run_in_thread)
+    thread.daemon = True
     thread.start()
     
     # Wait for completion with timeout
     if completed.wait(timeout + 10):  # Extra 10 seconds for thread overhead
-        if error:
-            raise error
-        return result
+        if not result_queue.empty():
+            return result_queue.get()
+        elif not exception_queue.empty():
+            raise exception_queue.get()
+        else:
+            raise RuntimeError("Thread completed but no result or exception found")
     else:
-        st.error("Operation timed out - the MCP server may be unresponsive")
         raise TimeoutError(f"Operation timed out after {timeout} seconds")
 
 
@@ -177,7 +178,7 @@ def format_error_message(error: Exception) -> str:
         return error_msg
 
 
-def safe_async_call(coro, error_message: str = "Async operation failed", timeout: float = 300.0):
+def safe_async_call(coro, error_message: str = "Async operation failed", timeout: float = 600.0):
     """
     Safely call an async function with improved error handling and timeout.
     
