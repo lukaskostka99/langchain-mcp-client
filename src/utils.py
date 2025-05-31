@@ -329,4 +329,28 @@ def get_system_info() -> Dict[str, Any]:
         'python_version': sys.version,
         'streamlit_version': st.__version__,
         'timestamp': datetime.datetime.now().isoformat()
-    } 
+    }
+
+
+def model_supports_tools(model_name: str) -> bool:
+    """
+    Check if a model supports tool calling.
+    
+    Args:
+        model_name: The name of the model to check
+        
+    Returns:
+        bool: True if the model supports tools, False otherwise
+    """
+    # List of known models that don't support tool calling
+    non_tool_models = [
+        'deepseek-r1',
+        # Add other models here as needed
+    ]
+    
+    model_name_lower = model_name.lower()
+    for non_tool_model in non_tool_models:
+        if non_tool_model in model_name_lower:
+            return False
+    
+    return True 

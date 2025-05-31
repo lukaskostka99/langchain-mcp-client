@@ -14,6 +14,7 @@ from langchain_core.messages import HumanMessage
 
 from .memory_tools import create_history_tool
 from .database import PersistentStorageManager
+from .utils import model_supports_tools
 
 
 async def run_agent(agent, message: str) -> Dict:
@@ -72,11 +73,27 @@ def create_agent_with_tools(
     Returns:
         Configured agent and checkpointer
     """
-    # Start with MCP tools
-    agent_tools = mcp_tools.copy()
+    from langgraph.graph import StateGraph, START, END
+    from langgraph.graph.message import MessagesState
+    from langchain_core.messages import BaseMessage
+    
+    # Check if the model supports tools
+    model_name = getattr(llm, 'model_name', getattr(llm, 'model', ''))
+    supports_tools = model_supports_tools(model_name)
+    
+    # Additionally, try to test tool binding capability
+    if supports_tools:
+        try:
+            # Try to bind an empty list of tools to see if the model actually supports tool calling
+            test_model = llm.bind_tools([])
+        except Exception:
+            supports_tools = False
+    
+    # Start with MCP tools only if model supports tools
+    agent_tools = []
     checkpointer = None
     
-    # Add memory functionality if enabled
+    # Set up memory functionality if enabled
     if memory_enabled:
         if memory_type == "Persistent (Cross-session)" and persistent_storage:
             # Use SQLite checkpointer for persistent storage
@@ -84,25 +101,52 @@ def create_agent_with_tools(
         else:
             # Use in-memory checkpointer for short-term storage
             checkpointer = InMemorySaver()
+    
+    # Only add tools if the model supports them
+    if supports_tools:
+        agent_tools = mcp_tools.copy()
         
-        # Add history tool when memory is enabled
-        agent_tools.append(create_history_tool())
-    
-    # Check if LLM has a system prompt
-    system_prompt = getattr(llm, '_system_prompt', None)
-    
-    # Create the agent with optional system prompt
-    if system_prompt:
-        # Create a state modifier that adds the system prompt
-        state_modifier = create_system_prompt_modifier(system_prompt)
-        agent = create_react_agent(
-            llm, 
-            agent_tools, 
-            checkpointer=checkpointer, 
-            state_modifier=state_modifier
-        )
+        # Add history tool when memory is enabled and model supports tools
+        if memory_enabled:
+            agent_tools.append(create_history_tool())
+        
+        # Check if LLM has a system prompt
+        system_prompt = getattr(llm, '_system_prompt', None)
+        
+        # Create the agent with optional system prompt
+        if system_prompt:
+            # Create a state modifier that adds the system prompt
+            state_modifier = create_system_prompt_modifier(system_prompt)
+            agent = create_react_agent(
+                llm, 
+                agent_tools, 
+                checkpointer=checkpointer, 
+                state_modifier=state_modifier
+            )
+        else:
+            agent = create_react_agent(llm, agent_tools, checkpointer=checkpointer)
     else:
-        agent = create_react_agent(llm, agent_tools, checkpointer=checkpointer)
+        # Create a simple conversational agent without tools for models that don't support them
+        def call_model(state: MessagesState):
+            # Get system prompt if available
+            system_prompt = getattr(llm, '_system_prompt', None)
+            messages = state["messages"]
+            
+            if system_prompt and (not messages or not any(msg.type == "system" for msg in messages)):
+                from langchain_core.messages import SystemMessage
+                messages = [SystemMessage(content=system_prompt)] + messages
+            
+            response = llm.invoke(messages)
+            return {"messages": [response]}
+        
+        # Build a simple StateGraph for non-tool models
+        builder = StateGraph(MessagesState)
+        builder.add_node("call_model", call_model)
+        builder.add_edge(START, "call_model")
+        builder.add_edge("call_model", END)
+        
+        # Compile with checkpointer if memory is enabled
+        agent = builder.compile(checkpointer=checkpointer)
     
     return agent, checkpointer
 

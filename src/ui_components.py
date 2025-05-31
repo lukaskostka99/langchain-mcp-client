@@ -26,7 +26,7 @@ from .agent_manager import (
     prepare_agent_invocation_config
 )
 from .memory_tools import create_history_tool, calculate_chat_statistics
-from .utils import run_async, reset_connection_state, safe_async_call, format_error_message
+from .utils import run_async, reset_connection_state, safe_async_call, format_error_message, model_supports_tools
 
 
 def render_sidebar():
@@ -568,16 +568,33 @@ def handle_chat_only_connection(llm_config: Dict, memory_config: Dict) -> Dict:
             success = create_and_configure_agent(llm_config, memory_config, [])
             
             if success:
-                if memory_config.get("enabled"):
-                    st.success("✅ Chat agent ready! (Memory enabled with history tool)")
+                # Check if the model supports tools
+                model_name = llm_config.get('model', '')
+                supports_tools = model_supports_tools(model_name)
+                
+                # Determine appropriate success message
+                if not supports_tools:
+                    if memory_config.get("enabled"):
+                        st.success("✅ Chat agent ready! (Memory enabled, but model doesn't support tools)")
+                        st.info("ℹ️ This model doesn't support tool calling, so memory will work through conversation history only.")
+                    else:
+                        st.success("✅ Chat agent ready! (Simple chat mode - no tools, no memory)")
                 else:
-                    st.success("✅ Chat agent ready! (No additional tools)")
+                    if memory_config.get("enabled"):
+                        st.success("✅ Chat agent ready! (Memory enabled with history tool)")
+                    else:
+                        st.success("✅ Chat agent ready! (No additional tools)")
                 return {"mode": "chat_only", "connected": True}
             else:
                 return {"mode": "chat_only", "connected": False}
                 
         except Exception as e:
-            st.error(f"Error initializing chat agent: {str(e)}")
+            error_message = str(e)
+            if "does not support tools" in error_message:
+                st.error("❌ This model doesn't support tool calling. The agent has been configured in simple chat mode.")
+                st.info("ℹ️ Memory and tool features are disabled for this model, but basic conversation works.")
+            else:
+                st.error(f"Error initializing chat agent: {error_message}")
             st.code(traceback.format_exc(), language="python")
             return {"mode": "chat_only", "connected": False}
 
@@ -674,12 +691,19 @@ def render_available_tools():
     if st.session_state.tools or (st.session_state.agent and st.session_state.get('memory_enabled', False)):
         st.header("Available Tools")
         
+        # Check if the current model supports tools
+        model_name = st.session_state.get('selected_model', '')
+        supports_tools = model_supports_tools(model_name)
+        
         # Show total tool count including history tool
         mcp_tool_count = len(st.session_state.tools)
-        memory_tool_count = 1 if st.session_state.get('memory_enabled', False) else 0
+        memory_tool_count = 1 if st.session_state.get('memory_enabled', False) and supports_tools else 0
         total_tools = mcp_tool_count + memory_tool_count
         
-        if mcp_tool_count > 0 and memory_tool_count > 0:
+        if not supports_tools and st.session_state.get('memory_enabled', False):
+            st.info("📊 Memory enabled (conversation history only - model doesn't support tool calling)")
+            st.warning("⚠️ This model doesn't support tools, so the history tool is not available. Memory works through conversation context only.")
+        elif mcp_tool_count > 0 and memory_tool_count > 0:
             st.info(f"📊 {total_tools} tools available ({mcp_tool_count} MCP + {memory_tool_count} memory tool)")
         elif mcp_tool_count > 0:
             st.info(f"📊 {mcp_tool_count} MCP tools available")
@@ -689,13 +713,26 @@ def render_available_tools():
             st.info("📊 No tools available (Chat-only mode)")
         
         render_tool_selector()
+    elif st.session_state.agent:
+        # Agent exists but no tools - show appropriate message
+        model_name = st.session_state.get('selected_model', '')
+        if not model_supports_tools(model_name):
+            st.header("Agent Status")
+            st.info("💬 Simple chat mode - this model doesn't support tool calling")
+        else:
+            st.header("Available Tools")
+            st.info("📊 No tools available (Chat-only mode)")
 
 
 def render_tool_selector():
     """Render the tool selection dropdown and information."""
-    # Add history tool to the dropdown when memory is enabled
+    # Check if the current model supports tools
+    model_name = st.session_state.get('selected_model', '')
+    supports_tools = model_supports_tools(model_name)
+    
+    # Add history tool to the dropdown when memory is enabled AND model supports tools
     tool_options = [tool.name for tool in st.session_state.tools]
-    if st.session_state.get('memory_enabled', False):
+    if st.session_state.get('memory_enabled', False) and supports_tools:
         tool_options.append("get_conversation_history (Memory)")
     
     # Only show tool selection if there are tools available
@@ -709,7 +746,11 @@ def render_tool_selector():
         if selected_tool_name:
             render_tool_information(selected_tool_name)
     else:
-        st.info("💬 In Chat-Only mode - no external tools available")
+        # No tools available
+        if st.session_state.get('memory_enabled', False) and not supports_tools:
+            st.info("💬 Memory is enabled but works through conversation context only (no tool interface)")
+        else:
+            st.info("💬 In Chat-Only mode - no external tools available")
 
 
 def render_tool_information(selected_tool_name: str):
