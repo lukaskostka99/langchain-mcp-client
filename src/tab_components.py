@@ -14,10 +14,11 @@ from langchain_core.messages import HumanMessage
 
 from .agent_manager import (
     run_agent, run_tool, prepare_agent_invocation_config,
-    extract_tool_executions_from_response, extract_assistant_response
+    extract_tool_executions_from_response, extract_assistant_response,
+    stream_agent_response, stream_agent_events
 )
 from .memory_tools import calculate_chat_statistics, format_chat_history_for_export
-from .utils import run_async, create_download_data, safe_async_call, format_error_message
+from .utils import run_async, create_download_data, safe_async_call, format_error_message, run_streaming_async
 from .database import PersistentStorageManager
 from .llm_providers import (
     get_available_providers, supports_system_prompt, get_default_temperature,
@@ -89,92 +90,188 @@ def handle_chat_input():
 
 
 def process_user_message(user_input: str):
-    """Process user message through the agent with improved context management."""
+    """Process user message through the agent with streaming support."""
     with st.chat_message("assistant"):
+        # Check if streaming is enabled in session state
+        streaming_enabled = st.session_state.get('enable_streaming', True)
+        
+        if streaming_enabled:
+            # Use streaming approach
+            process_streaming_response(user_input)
+        else:
+            # Use original non-streaming approach
+            process_non_streaming_response(user_input)
+
+
+def process_streaming_response(user_input: str):
+    """Process user message with streaming response."""
+    # Prepare agent invocation config
+    config = prepare_agent_invocation_config(
+        memory_enabled=st.session_state.get('memory_enabled', False),
+        thread_id=st.session_state.get('thread_id', 'default')
+    )
+    
+    # Create container for streaming response
+    response_container = st.empty()
+    current_response = ""
+    tool_executions = []
+    
+    try:
         with st.spinner("Thinking..."):
-            try:
-                # Prepare agent invocation config
-                config = prepare_agent_invocation_config(
-                    memory_enabled=st.session_state.get('memory_enabled', False),
-                    thread_id=st.session_state.get('thread_id', 'default')
+            # Use the proper async generator handling from utils
+            async def process_streaming():
+                nonlocal current_response, tool_executions
+                
+                async for event in stream_agent_events(st.session_state.agent, user_input, config):
+                    event_type = event.get("event")
+                    
+                    if event_type == "on_chat_model_stream":
+                        # Handle streaming tokens from the chat model
+                        chunk = event.get("data", {}).get("chunk", {})
+                        if hasattr(chunk, 'content') and chunk.content:
+                            current_response += chunk.content
+                            response_container.markdown(current_response)
+                    
+                    elif event_type == "on_chat_model_end":
+                        # Model finished generating
+                        final_response = event.get("data", {}).get("output", {})
+                        # If we didn't get content through streaming, use the final response
+                        if not current_response and final_response:
+                            if hasattr(final_response, 'content'):
+                                current_response = final_response.content
+                            elif isinstance(final_response, str):
+                                current_response = final_response
+                            response_container.markdown(current_response)
+                    
+                    elif event_type == "on_tool_start":
+                        # Tool execution started
+                        tool_name = event.get("name", "Unknown")
+                        current_response += f"\n\n🔧 Using tool: {tool_name}..."
+                        response_container.markdown(current_response)
+                    
+                    elif event_type == "on_tool_end":
+                        # Tool execution completed
+                        tool_name = event.get("name", "Unknown")
+                        current_response += f" ✅"
+                        response_container.markdown(current_response)
+                        
+                        # Extract tool execution data
+                        tool_output = event.get("data", {}).get("output", "")
+                        tool_input = event.get("data", {}).get("input", {})
+                        
+                        tool_executions.append({
+                            "tool_name": tool_name,
+                            "input": tool_input,
+                            "output": tool_output,
+                            "timestamp": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        })
+                
+                return current_response, tool_executions
+            
+            # Process the streaming using run_async
+            result = run_async(process_streaming())
+            if result:
+                final_response, final_tool_executions = result
+                current_response = final_response or current_response
+                tool_executions = final_tool_executions or tool_executions
+                
+    except Exception as e:
+        st.error(f"❌ Streaming failed: {str(e)}")
+        st.info("🔄 Falling back to non-streaming mode...")
+        process_non_streaming_response(user_input)
+        return
+    
+    # Store the response in chat history
+    if current_response:
+        st.session_state.chat_history.append({"role": "assistant", "content": current_response})
+    
+    # Handle tool executions if any occurred
+    if tool_executions:
+        # Remove duplicates and add to session state
+        existing_executions = st.session_state.get('tool_executions', [])
+        new_executions = []
+        
+        for execution in tool_executions:
+            # Check if this execution already exists
+            if not any(
+                ex['timestamp'] == execution['timestamp'] and 
+                ex['tool_name'] == execution['tool_name']
+                for ex in existing_executions
+            ):
+                new_executions.append(execution)
+        
+        if new_executions:
+            st.session_state.tool_executions.extend(new_executions)
+            st.success(f"🔧 Executed {len(new_executions)} tool(s)")
+    
+    st.rerun()
+
+
+def process_non_streaming_response(user_input: str):
+    """Process user message with non-streaming response (original implementation)."""
+    with st.spinner("Thinking..."):
+        try:
+            # Prepare agent invocation config
+            config = prepare_agent_invocation_config(
+                memory_enabled=st.session_state.get('memory_enabled', False),
+                thread_id=st.session_state.get('thread_id', 'default')
+            )
+            
+            # Run the agent with context isolation and shorter timeout
+            if config:
+                # For memory-enabled agents, use safe async call with reasonable timeout
+                response = safe_async_call(
+                    st.session_state.agent.ainvoke({"messages": [HumanMessage(user_input)]}, config),
+                    "Failed to process message with memory",
+                    timeout=600.0  # 10 minutes timeout for chat responses
                 )
+            else:
+                # For agents without memory, use safe async call with shorter timeout
+                response = safe_async_call(
+                    run_agent(st.session_state.agent, user_input),
+                    "Failed to process message",
+                    timeout=600.0  # 10 minutes timeout for simple chat
+                )
+            
+            if response is None:
+                st.error("❌ Failed to get response from agent. Please try again.")
+                st.info("💡 If this persists, try refreshing the page or reconnecting to the MCP server.")
+                return
+            
+            # Process response
+            tool_executions = extract_tool_executions_from_response(response)
+            assistant_response = extract_assistant_response(response)
+            
+            if assistant_response:
+                st.write(assistant_response)
+                # Add to chat history
+                st.session_state.chat_history.append({"role": "assistant", "content": assistant_response})
+            else:
+                st.warning("No response content found.")
+            
+            # Store tool executions in session state for the test tools tab
+            if tool_executions:
+                # Remove duplicates based on timestamp and tool name to avoid repeated entries
+                existing_executions = st.session_state.get('tool_executions', [])
+                new_executions = []
                 
-                # Run the agent with context isolation and shorter timeout
-                if config:
-                    # For memory-enabled agents, use safe async call with reasonable timeout
-                    response = safe_async_call(
-                        st.session_state.agent.ainvoke({"messages": [HumanMessage(user_input)]}, config),
-                        "Failed to process message with memory",
-                        timeout=600.0  # 10 minutes timeout for chat responses
-                    )
-                else:
-                    # For agents without memory, use safe async call with shorter timeout
-                    response = safe_async_call(
-                        run_agent(st.session_state.agent, user_input),
-                        "Failed to process message",
-                        timeout=600.0  # 10 minutes timeout for simple chat
-                    )
-                
-                if response is None:
-                    st.error("❌ Failed to get response from agent. Please try again.")
-                    st.info("💡 If this persists, try refreshing the page or reconnecting to the MCP server.")
-                    return
-                
-                # Process response
-                tool_executions = extract_tool_executions_from_response(response)
-                assistant_response = extract_assistant_response(response)
-                
-                # Debug: Show the response structure when memory is enabled
-                if st.session_state.get('memory_enabled', False) and st.session_state.get('debug_system_prompt', False):
-                    with st.expander("🔍 Debug: Raw Agent Response", expanded=False):
-                        st.write("**Number of messages in response:**", len(response.get("messages", [])))
-                        st.write("**Message types:**")
-                        for i, msg in enumerate(response.get("messages", [])):
-                            msg_type = type(msg).__name__
-                            content_preview = str(getattr(msg, 'content', ''))[:100] + "..." if len(str(getattr(msg, 'content', ''))) > 100 else str(getattr(msg, 'content', ''))
-                            st.write(f"  {i}: {msg_type} - {content_preview}")
-                        st.write("**Extracted assistant response:**", repr(assistant_response))
-                
-                # Display tool outputs
-                tool_outputs = []
                 for execution in tool_executions:
-                    if execution["tool_name"] != 'get_conversation_history':
-                        tool_outputs.append(execution["output"])
-                        st.session_state.tool_executions.append(execution)
-                    else:
-                        # For conversation history, show actual content but use summary in tool_outputs
-                        tool_outputs.append("📋 Conversation history retrieved")
-                        st.session_state.tool_executions.append(execution)
+                    # Check if this execution already exists (by timestamp and tool name)
+                    if not any(
+                        ex['timestamp'] == execution['timestamp'] and 
+                        ex['tool_name'] == execution['tool_name']
+                        for ex in existing_executions
+                    ):
+                        new_executions.append(execution)
                 
-                # Only display tool outputs if there are any from the current interaction
-                if tool_outputs:
-                    st.code("\n".join(tool_outputs), language="text")
+                if new_executions:
+                    st.session_state.tool_executions.extend(new_executions)
+                    st.success(f"🔧 Executed {len(new_executions)} tool(s)")
                 
-                # Display assistant response
-                if assistant_response:
-                    st.write(assistant_response)
-                elif not assistant_response:
-                    st.warning("The agent didn't provide a clear response. This might be a processing issue.")
-                    with st.expander("Debug: Raw Response"):
-                        st.json(response)
-
-                # Add assistant message to chat history
-                st.session_state.chat_history.append({
-                    "role": "assistant", 
-                    "tool": "\n".join(tool_outputs) if tool_outputs else None,
-                    "content": assistant_response
-                })
-                
-                # Auto-save to persistent storage if enabled
-                handle_auto_save(assistant_response)
-                
-                # Apply message trimming
-                apply_message_trimming()
-                
-                st.rerun()
-
-            except Exception as e:
-                handle_chat_error(e)
+        except Exception as e:
+            error_msg = format_error_message(e)
+            st.error(f"❌ Error processing message: {error_msg}")
+            st.code(traceback.format_exc(), language="python")
 
 
 def handle_auto_save(assistant_response: str):

@@ -23,6 +23,7 @@ LLM_PROVIDERS = {
         "requires_api_key": True,
         "description": "OpenAI's GPT models",
         "supports_system_prompt": True,
+        "supports_streaming": True,
         "default_temperature": 0.7,
         "temperature_range": (0.0, 2.0),
         "default_max_tokens": 4096,
@@ -36,6 +37,7 @@ LLM_PROVIDERS = {
         "requires_api_key": True,
         "description": "Anthropic's Claude models",
         "supports_system_prompt": True,
+        "supports_streaming": True,
         "default_temperature": 0.7,
         "temperature_range": (0.0, 1.0),
         "default_max_tokens": 4096,
@@ -49,6 +51,7 @@ LLM_PROVIDERS = {
         "requires_api_key": True,
         "description": "Google's Gemini models",
         "supports_system_prompt": True,
+        "supports_streaming": True,
         "default_temperature": 0.7,
         "temperature_range": (0.0, 2.0),
         "default_max_tokens": 8192,
@@ -63,6 +66,7 @@ LLM_PROVIDERS = {
         "requires_api_key": False,
         "description": "Local Ollama models",
         "supports_system_prompt": True,
+        "supports_streaming": True,
         "default_temperature": 0.7,
         "temperature_range": (0.0, 2.0),
         "default_max_tokens": 4096,
@@ -138,6 +142,11 @@ def get_default_timeout(provider: str) -> float:
     return LLM_PROVIDERS.get(provider, {}).get("default_timeout", 600.0)
 
 
+def supports_streaming(provider: str) -> bool:
+    """Check if a provider supports streaming."""
+    return LLM_PROVIDERS.get(provider, {}).get("supports_streaming", False)
+
+
 def create_llm_model(
     llm_provider: str, 
     api_key: str, 
@@ -145,7 +154,8 @@ def create_llm_model(
     temperature: float = 0.7,
     max_tokens: Optional[int] = None,
     timeout: Optional[float] = None,
-    system_prompt: Optional[str] = None
+    system_prompt: Optional[str] = None,
+    streaming: bool = True
 ):
     """Create a language model based on the selected provider with advanced configuration."""
     # Common parameters
@@ -153,6 +163,10 @@ def create_llm_model(
         "model": model_name,
         "temperature": temperature,
     }
+    
+    # Add streaming if supported
+    if streaming and supports_streaming(llm_provider):
+        common_params["streaming"] = True
     
     # Add max_tokens if specified
     if max_tokens:

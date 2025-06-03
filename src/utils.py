@@ -11,6 +11,7 @@ import datetime
 import contextvars
 from typing import Any, Dict, List
 import streamlit as st
+from langchain_core.callbacks import BaseCallbackHandler
 
 
 def run_async(coro):
@@ -121,6 +122,10 @@ def initialize_session_state():
     
     if 'servers' not in st.session_state:
         st.session_state.servers = {}
+    
+    # Initialize streaming setting
+    if 'enable_streaming' not in st.session_state:
+        st.session_state.enable_streaming = True
     
     # Initialize event loop with better error handling
     if 'loop' not in st.session_state:
@@ -353,4 +358,151 @@ def model_supports_tools(model_name: str) -> bool:
         if non_tool_model in model_name_lower:
             return False
     
-    return True 
+    return True
+
+
+class StreamlitStreamingCallbackHandler(BaseCallbackHandler):
+    """Custom callback handler for streaming tokens to Streamlit."""
+    
+    def __init__(self, container):
+        """Initialize with Streamlit container for displaying tokens."""
+        self.container = container
+        self.text = ""
+        
+    def on_llm_new_token(self, token: str, **kwargs) -> None:
+        """Handle new token from LLM."""
+        self.text += token
+        self.container.markdown(self.text)
+        
+    def on_llm_end(self, response, **kwargs) -> None:
+        """Handle end of LLM response."""
+        if hasattr(response, 'generations') and response.generations:
+            # Get the final content from the generation
+            final_content = response.generations[0][0].text
+            self.container.markdown(final_content)
+
+
+async def run_async_generator(async_gen):
+    """
+    Run an async generator and collect all results.
+    Useful for streaming functions that yield events.
+    """
+    results = []
+    try:
+        async for item in async_gen:
+            results.append(item)
+    except Exception as e:
+        st.error(f"Error in async generator: {str(e)}")
+    return results
+
+
+def run_streaming_async(async_gen_func):
+    """
+    Run an async generator function with proper context management.
+    This is specifically designed for streaming operations.
+    """
+    try:
+        # Check if we're already in an async context
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        
+        if loop is None:
+            # No event loop running - create one and run the generator
+            return asyncio.run(run_async_generator(async_gen_func))
+        else:
+            # We're in an async context - use a new thread
+            import concurrent.futures
+            import threading
+            
+            result = None
+            exception = None
+            
+            def run_in_thread():
+                nonlocal result, exception
+                try:
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    result = new_loop.run_until_complete(run_async_generator(async_gen_func))
+                    new_loop.close()
+                except Exception as e:
+                    exception = e
+            
+            thread = threading.Thread(target=run_in_thread)
+            thread.start()
+            thread.join(timeout=600.0)  # 10 minute timeout
+            
+            if thread.is_alive():
+                raise TimeoutError("Streaming operation timed out")
+            
+            if exception:
+                raise exception
+                
+            return result
+            
+    except Exception as e:
+        st.error(f"Error running streaming async function: {str(e)}")
+        return []
+
+
+def run_async_coroutine(coro):
+    """
+    Run an async coroutine and return the result.
+    This is specifically for single coroutines, not generators.
+    """
+    try:
+        # Check if we're already in an async context
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        
+        if loop is None:
+            # No event loop running - create one and run the coroutine
+            future = asyncio.wait_for(coro, timeout=600.0)  # 10 minute max timeout
+            return asyncio.run(future)
+        else:
+            # We're in an async context - use a new thread
+            import threading
+            import queue
+            result_queue = queue.Queue()
+            exception_queue = queue.Queue()
+            completed = threading.Event()
+            
+            def run_in_thread():
+                try:
+                    # Create new event loop for this thread
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    
+                    # Run with timeout
+                    future = asyncio.wait_for(coro, timeout=600.0)
+                    result = new_loop.run_until_complete(future)
+                    result_queue.put(result)
+                except Exception as e:
+                    exception_queue.put(e)
+                finally:
+                    # Clean up the loop
+                    new_loop.close()
+                    completed.set()
+            
+            # Start thread
+            thread = threading.Thread(target=run_in_thread)
+            thread.daemon = True
+            thread.start()
+            
+            # Wait for completion with timeout
+            if completed.wait(610):  # Extra 10 seconds for thread overhead
+                if not result_queue.empty():
+                    return result_queue.get()
+                elif not exception_queue.empty():
+                    raise exception_queue.get()
+                else:
+                    raise RuntimeError("Thread completed but no result or exception found")
+            else:
+                raise TimeoutError("Operation timed out")
+                
+    except Exception as e:
+        st.error(f"Error running async coroutine: {str(e)}")
+        return None 

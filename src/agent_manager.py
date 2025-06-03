@@ -22,6 +22,30 @@ async def run_agent(agent, message: str) -> Dict:
     return await agent.ainvoke({"messages": [HumanMessage(message)]})
 
 
+async def stream_agent_response(agent, message: str, config: Dict = None):
+    """Stream agent response with real-time updates."""
+    messages = [HumanMessage(message)]
+    
+    if config:
+        async for event in agent.astream({"messages": messages}, config):
+            yield event
+    else:
+        async for event in agent.astream({"messages": messages}):
+            yield event
+
+
+async def stream_agent_events(agent, message: str, config: Dict = None):
+    """Stream agent events for more detailed streaming control."""
+    messages = [HumanMessage(message)]
+    
+    if config:
+        async for event in agent.astream_events({"messages": messages}, config, version="v2"):
+            yield event
+    else:
+        async for event in agent.astream_events({"messages": messages}, version="v2"):
+            yield event
+
+
 async def run_tool(tool, **kwargs):
     """Run a tool with the provided parameters."""
     return await tool.ainvoke(kwargs)

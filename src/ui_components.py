@@ -14,7 +14,7 @@ from typing import Dict, List, Optional
 from .database import PersistentStorageManager
 from .llm_providers import (
     get_available_providers, get_provider_models, get_default_model,
-    requires_api_key, create_llm_model
+    requires_api_key, create_llm_model, supports_streaming
 )
 from .mcp_client import (
     setup_mcp_client, get_tools_from_client, create_single_server_config,
@@ -38,6 +38,9 @@ def render_sidebar():
         
         # LLM Provider configuration
         llm_config = render_llm_configuration()
+        
+        # Streaming configuration
+        render_streaming_configuration(llm_config)
         
         # Memory configuration
         memory_config = render_memory_configuration()
@@ -103,6 +106,32 @@ def render_llm_configuration() -> Dict:
         "api_key": api_key,
         "model": model_name
     }
+
+
+def render_streaming_configuration(llm_config: Dict) -> None:
+    """Render streaming configuration options."""
+    with st.expander("🌊 Streaming Settings", expanded=False):
+        provider = llm_config.get("provider", "")
+        streaming_supported = supports_streaming(provider) if provider else False
+        
+        if streaming_supported:
+            enable_streaming = st.checkbox(
+                "Enable Streaming",
+                value=st.session_state.get('enable_streaming', True),
+                help="Stream responses token by token for a more interactive experience"
+            )
+            st.session_state.enable_streaming = enable_streaming
+            
+            if enable_streaming:
+                st.success("✅ Streaming enabled - responses will appear in real-time")
+            else:
+                st.info("ℹ️ Streaming disabled - responses will appear all at once")
+        else:
+            st.session_state.enable_streaming = False
+            if provider:
+                st.warning(f"⚠️ {provider} doesn't support streaming")
+            else:
+                st.info("ℹ️ Select a provider to see streaming options")
 
 
 def render_memory_configuration() -> Dict:

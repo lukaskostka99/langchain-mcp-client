@@ -6,17 +6,41 @@ This Streamlit application provides a user interface for connecting to MCP (Mode
 
 **This application is currently in active development.** While functional, you may encounter bugs, incomplete features, or unexpected behavior. We appreciate your patience and welcome feedback to help improve the application.
 
-## Features
+## ✨ Features
 
-- **Multi-Provider LLM Support**: Connect to OpenAI, Anthropic (Claude), Google Generative AI, or local models via Ollama
-- **Advanced Configuration**: Comprehensive configuration interface with system prompts, temperature control, token limits, and provider-specific settings
-- **System Prompt Presets**: Choose from built-in presets (Default, Code Assistant, Research Assistant, Creative Assistant, Business Assistant) or create custom system prompts
-- **MCP Server Integration**: Connect to single or multiple MCP servers via SSE (Server-Sent Events)
-- **Individual Tool Testing**: Test each MCP tool individually with custom parameters, view detailed results, and track performance metrics
-- **Intelligent Agent Chat**: Chat interface with LLM agent that can dynamically use available MCP tools
-- **Advanced Memory System**: Persistent conversation memory with thread management, export/import capabilities, and conversation history search
-- **Configuration Management**: Save, load, export, and reset configurations with real-time status indicators
-- **Tool Execution Tracking**: View detailed tool execution results and performance analytics
+- **Multi-Provider LLM Support**: OpenAI, Anthropic Claude, Google Gemini, and Ollama
+- **Streaming Responses**: Real-time token-by-token streaming for supported models
+- **MCP (Model Context Protocol) Integration**: Connect to MCP servers for tool access
+- **Advanced Memory Management**: Short-term session memory and persistent cross-session memory
+- **Multi-Server Support**: Connect to multiple MCP servers simultaneously
+- **Tool Testing Interface**: Test individual tools with custom parameters
+- **Chat-Only Mode**: Use without MCP servers for simple conversations
+- **Advanced Model Configuration**: Custom temperature, max tokens, timeout, and system prompts
+- **Comprehensive Logging**: Track all tool executions and conversations
+- **Export/Import**: Save and load conversation history
+- **Containerized Deployment**: Easy Docker setup
+
+## 🌊 Streaming Support
+
+The application now supports real-time streaming responses for all compatible models:
+
+### Supported Models with Streaming
+- ✅ **OpenAI**: All GPT models (GPT-4, GPT-3.5-turbo, etc.)
+- ✅ **Anthropic**: All Claude models (Claude-3.5-Sonnet, Claude-3-Opus, etc.)
+- ✅ **Google**: All Gemini models (Gemini-2.0-Flash, etc.)
+- ✅ **Ollama**: All local models (Granite, Qwen, etc.)
+
+### How It Works
+1. **Enable Streaming**: Toggle in the "🌊 Streaming Settings" section in the sidebar
+2. **Real-time Display**: Responses appear token by token as they're generated
+3. **Tool Integration**: See tool execution status in real-time
+4. **Fallback Support**: Automatically falls back to non-streaming if issues occur
+
+### Benefits
+- **Better User Experience**: See responses as they're being generated
+- **Faster Perceived Response Time**: Start reading while the model is still generating
+- **Real-time Feedback**: Know immediately when tools are being executed
+- **Interactive Feel**: More engaging conversation experience
 
 ## Configuration System
 
