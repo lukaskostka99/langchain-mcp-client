@@ -6,7 +6,7 @@ This Streamlit application provides a user interface for connecting to MCP (Mode
 
 **This application is currently in active development.** While functional, you may encounter bugs, incomplete features, or unexpected behavior. We appreciate your patience and welcome feedback to help improve the application.
 
-## ✨ Features
+## Features
 
 - **Multi-Provider LLM Support**: OpenAI, Anthropic Claude, Google Gemini, and Ollama
 - **Streaming Responses**: Real-time token-by-token streaming for supported models
@@ -20,7 +20,7 @@ This Streamlit application provides a user interface for connecting to MCP (Mode
 - **Export/Import**: Save and load conversation history
 - **Containerized Deployment**: Easy Docker setup
 
-## 🌊 Streaming Support
+## NEW - Streaming Support
 
 The application now supports real-time streaming responses for all compatible models:
 
