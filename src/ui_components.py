@@ -20,13 +20,9 @@ from .mcp_client import (
     setup_mcp_client, get_tools_from_client, create_single_server_config,
     create_multi_server_config
 )
-from .agent_manager import (
-    create_agent_with_tools, run_agent, run_tool,
-    extract_tool_executions_from_response, extract_assistant_response,
-    prepare_agent_invocation_config
-)
-from .memory_tools import create_history_tool, calculate_chat_statistics
+from .agent_manager import create_agent_with_tools
 from .utils import run_async, reset_connection_state, safe_async_call, format_error_message, model_supports_tools
+from .llm_providers import is_openai_reasoning_model, supports_streaming_for_reasoning_model
 
 
 def render_sidebar():
@@ -89,14 +85,33 @@ def render_llm_configuration() -> Dict:
         on_change=reset_connection_state
     )
     
-    # Custom model input for Ollama
-    if llm_provider == "Ollama" and model_name == "Other":
+    # Custom model input for providers that support "Other"
+    if model_name == "Other":
+        placeholder_text = {
+            "Ollama": "Enter custom Ollama model name (e.g. llama3)",
+            "OpenAI": "Enter custom OpenAI model name (e.g. gpt-4-turbo, o1-mini, o3-mini)",
+            "Anthropic": "Enter custom Anthropic model name (e.g. claude-3-sonnet-20240229)",
+            "Google": "Enter custom Google model name (e.g. gemini-pro)"
+        }.get(llm_provider, "Enter custom model name")
+        
         custom_model = st.text_input(
             "Custom Model Name",
-            placeholder="Enter custom Ollama model name (e.g. llama3)"
+            placeholder=placeholder_text,
+            key=f"custom_model_{llm_provider}"
         )
         if custom_model:
             model_name = custom_model
+    
+    # Show warning for reasoning models
+    if llm_provider == "OpenAI" and is_openai_reasoning_model(model_name):
+        # Check if it's an o1 series model (not supported)
+        if model_name in ["o1", "o1-mini", "o1-preview"] or "o1-" in model_name.lower():
+            st.error("❌ **o1 Series Models Not Supported**: o1, o1-mini, and o1-preview models have unique API requirements that are not compatible with this application. Please use o3-mini, o4-mini, or regular GPT models instead.")
+            st.info("💡 **Recommended alternatives**: o3-mini, o4-mini, gpt-4o, or gpt-4 work great with this application!")
+        elif supports_streaming_for_reasoning_model(model_name):
+            st.warning("⚠️ **Reasoning Model Detected**: This model has special requirements - temperature is not supported. The model will use optimized parameters automatically.")
+        else:
+            st.warning("⚠️ **Reasoning Model Detected**: This model has special requirements - temperature and streaming are not supported. The model will use optimized parameters automatically.")
     
     # Store selected model in session state for Config tab
     st.session_state.selected_model = model_name

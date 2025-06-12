@@ -1704,8 +1704,9 @@ def render_parameter_validation():
         timeout = st.session_state.get('config_timeout')
         
         # Validate parameters
+        current_model = st.session_state.get('selected_model', '')
         is_valid, error_msg = validate_model_parameters(
-            current_provider, temperature, max_tokens, timeout
+            current_provider, temperature, max_tokens, timeout, current_model
         )
         
         if is_valid:
