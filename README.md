@@ -9,6 +9,7 @@ This Streamlit application provides a user interface for connecting to MCP (Mode
 ## Features
 
 - **Multi-Provider LLM Support**: OpenAI, Anthropic Claude, Google Gemini, and Ollama
+- **OpenAI Reasoning Models Support**: Enhanced support for o3-mini, o4-mini with specialized parameter handling
 - **Streaming Responses**: Real-time token-by-token streaming for supported models
 - **MCP (Model Context Protocol) Integration**: Connect to MCP servers for tool access
 - **Advanced Memory Management**: Short-term session memory and persistent cross-session memory
@@ -16,6 +17,7 @@ This Streamlit application provides a user interface for connecting to MCP (Mode
 - **Tool Testing Interface**: Test individual tools with custom parameters
 - **Chat-Only Mode**: Use without MCP servers for simple conversations
 - **Advanced Model Configuration**: Custom temperature, max tokens, timeout, and system prompts
+- **Intelligent Model Validation**: Automatic parameter validation and compatibility checking
 - **Comprehensive Logging**: Track all tool executions and conversations
 - **Export/Import**: Save and load conversation history
 - **Containerized Deployment**: Easy Docker setup
@@ -25,10 +27,11 @@ This Streamlit application provides a user interface for connecting to MCP (Mode
 The application now supports real-time streaming responses for all compatible models:
 
 ### Supported Models with Streaming
-- ✅ **OpenAI**: All GPT models (GPT-4, GPT-3.5-turbo, etc.)
-- ✅ **Anthropic**: All Claude models (Claude-3.5-Sonnet, Claude-3-Opus, etc.)
-- ✅ **Google**: All Gemini models (Gemini-2.0-Flash, etc.)
+- ✅ **OpenAI**: All GPT models (GPT-4o, GPT-4, GPT-3.5-turbo) + Reasoning models (o3-mini, o4-mini)
+- ✅ **Anthropic**: All Claude models (Claude-3.5-Sonnet, Claude-3-Opus, Claude-3-Haiku)
+- ✅ **Google**: All Gemini models (Gemini-2.0-Flash, Gemini-2.5-Pro-Exp)
 - ✅ **Ollama**: All local models (Granite, Qwen, etc.)
+- ❌ **OpenAI o1 Series**: o1, o1-mini, o1-preview (not supported due to API limitations)
 
 ### How It Works
 1. **Enable Streaming**: Toggle in the "🌊 Streaming Settings" section in the sidebar
@@ -42,13 +45,44 @@ The application now supports real-time streaming responses for all compatible mo
 - **Real-time Feedback**: Know immediately when tools are being executed
 - **Interactive Feel**: More engaging conversation experience
 
+## OpenAI Reasoning Models Support
+
+The application now includes enhanced support for OpenAI's reasoning models with specialized handling:
+
+### Supported Reasoning Models
+- ✅ **o3-mini**: Fast reasoning model with streaming support
+- ✅ **o4-mini**: Advanced reasoning model with streaming support
+- ❌ **o1 Series**: o1, o1-mini, o1-preview (not supported due to unique API requirements)
+
+### Reasoning Model Features
+- **Automatic Parameter Optimization**: Uses `max_completion_tokens` instead of `max_tokens`
+- **Temperature Handling**: Automatically disables temperature for reasoning models (they use fixed temperature)
+- **Reasoning Effort**: Automatically sets reasoning effort to "medium" for optimal performance
+- **Streaming Support**: o3/o4 series support real-time streaming (o1 series does not)
+- **Smart Validation**: Prevents incompatible parameter combinations with clear error messages
+
+### User Experience
+- **Clear Warnings**: Visual indicators when selecting reasoning models
+- **Alternative Suggestions**: Recommends compatible models when o1 series is selected
+- **Seamless Integration**: Works with all existing features (memory, tools, streaming)
+
 ## Configuration System
 
 ### LLM Providers & Parameters
-- **OpenAI**: GPT-4o, GPT-4, GPT-3.5-turbo with temperature (0.0-2.0), max tokens (1-4000), timeout (10-600s)
-- **Anthropic**: Claude models with temperature (0.0-1.0), max tokens (1-4000), timeout (10-600s)  
-- **Google**: Gemini models with temperature (0.0-1.0), max tokens (1-2048), timeout (10-600s)
-- **Ollama**: Local models with temperature (0.0-1.0), max tokens (1-4000), timeout (10-600s)
+- **OpenAI**: 
+  - **Regular Models**: GPT-4o, GPT-4, GPT-3.5-turbo with temperature (0.0-2.0), max tokens (1-16384), timeout (10-600s)
+  - **Reasoning Models**: o3-mini, o4-mini with specialized parameter handling (no temperature, max_completion_tokens, reasoning_effort)
+  - **Unsupported**: o1, o1-mini, o1-preview (incompatible API requirements)
+- **Anthropic**: Claude-3.5-Sonnet, Claude-3-Opus, Claude-3-Haiku with temperature (0.0-1.0), max tokens (1-8192), timeout (10-600s)  
+- **Google**: Gemini-2.0-Flash, Gemini-2.5-Pro-Exp with temperature (0.0-2.0), max tokens (1-32768), timeout (10-600s)
+- **Ollama**: Local models (Granite3.3:8b, Qwen3:4b) with temperature (0.0-2.0), max tokens (1-32768), timeout (10-600s)
+
+### Custom Model Support
+All providers now support an **"Other"** option that allows you to specify custom model names:
+- **OpenAI**: Enter any OpenAI model name (e.g., gpt-4-turbo, o3-mini, custom fine-tuned models)
+- **Anthropic**: Enter any Anthropic model name (e.g., claude-3-sonnet-20240229)
+- **Google**: Enter any Google model name (e.g., gemini-pro, gemini-1.5-pro)
+- **Ollama**: Enter any locally available model name (e.g., llama3, codellama, custom models)
 
 ### System Prompts
 - **Built-in Presets**: Five specialized system prompts for different use cases
@@ -158,6 +192,11 @@ The server will start on port 8000 by default. In the Streamlit app, you can con
 - **Connection Issues**: Ensure your MCP server is running and accessible
 - **API Key Errors**: Verify that you've entered the correct API key for your chosen LLM provider
 - **Tool Errors**: Check the server logs for details on any errors that occur when using tools
+- **Reasoning Model Issues**: 
+  - If you see "o1 Series Models Not Supported", use o3-mini or o4-mini instead
+  - Reasoning models don't support custom temperature settings
+  - Some reasoning models may not support streaming (check the model-specific warnings)
+- **Custom Model Names**: When using "Other" option, ensure the model name is exactly as expected by the provider's API, and you have access to it.
 
 ## Resources
 
