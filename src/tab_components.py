@@ -30,8 +30,6 @@ from .llm_providers import (
 
 def render_chat_tab():
     """Render the main chat interface tab."""
-    st.header("Chat with Agent")
-
     # Connection and memory status indicators
     render_status_indicators()
 
@@ -47,7 +45,7 @@ def render_status_indicators():
     # Create a more sophisticated status display
     with st.container():
         # Main status row
-        col1, col2, col3 = st.columns([2, 2, 1])
+        col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
         
         with col1:
             # Connection status with detailed info
@@ -143,8 +141,8 @@ def render_status_indicators():
                     st.success("🌊 Streaming ON")
                 else:
                     st.info("🌊 Streaming OFF")
-                
-                # Configuration status
+        with col4:
+            with st.container():    # Configuration status
                 custom_config = st.session_state.get('config_use_custom_settings', False)
                 if custom_config:
                     st.info("⚙️ Custom Config")
