@@ -150,10 +150,65 @@ def reset_connection_state():
 
 
 def create_download_data(data: Dict, prefix: str = "export") -> tuple[str, str]:
-    """Create downloadable JSON data."""
+    """Create downloadable JSON data with custom serialization for complex objects."""
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"{prefix}_{timestamp}.json"
-    json_str = json.dumps(data, indent=2)
+    
+    # Custom JSON serializer to handle complex objects
+    def custom_serializer(obj):
+        """Custom serializer for objects that aren't normally JSON serializable."""
+        # Handle LangChain message objects
+        if hasattr(obj, '__class__') and 'langchain' in str(obj.__class__):
+            if hasattr(obj, 'content'):
+                return {
+                    'type': obj.__class__.__name__,
+                    'content': str(obj.content),
+                    'additional_kwargs': getattr(obj, 'additional_kwargs', {}),
+                    'response_metadata': getattr(obj, 'response_metadata', {})
+                }
+            else:
+                # For other LangChain objects, convert to string
+                return {
+                    'type': obj.__class__.__name__,
+                    'content': str(obj)
+                }
+        
+        # Handle datetime objects
+        elif isinstance(obj, datetime.datetime):
+            return obj.isoformat()
+        
+        # Handle other datetime objects
+        elif isinstance(obj, datetime.date):
+            return obj.isoformat()
+        
+        # Handle sets
+        elif isinstance(obj, set):
+            return list(obj)
+        
+        # Handle bytes
+        elif isinstance(obj, bytes):
+            try:
+                return obj.decode('utf-8')
+            except UnicodeDecodeError:
+                return f"<bytes: {len(obj)} bytes>"
+        
+        # Handle other complex objects by converting to string
+        elif hasattr(obj, '__dict__'):
+            try:
+                return {
+                    'type': obj.__class__.__name__,
+                    'content': str(obj),
+                    'attributes': {k: v for k, v in obj.__dict__.items() if not k.startswith('_')}
+                }
+            except:
+                return f"<{obj.__class__.__name__}: {str(obj)[:100]}>"
+        
+        # Fallback: convert to string
+        else:
+            return str(obj)
+    
+    # Serialize with custom handler
+    json_str = json.dumps(data, indent=2, default=custom_serializer, ensure_ascii=False)
     return json_str, filename
 
 

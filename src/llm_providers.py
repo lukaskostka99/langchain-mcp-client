@@ -12,6 +12,8 @@ from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_ollama import ChatOllama
 
+from langchain_core.output_parsers import JsonOutputParser
+
 
 # OpenAI reasoning models that require special parameter handling
 OPENAI_REASONING_MODELS = {

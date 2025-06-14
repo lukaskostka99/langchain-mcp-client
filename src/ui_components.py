@@ -21,7 +21,7 @@ from .mcp_client import (
     create_multi_server_config
 )
 from .agent_manager import create_agent_with_tools
-from .utils import run_async, reset_connection_state, safe_async_call, format_error_message, model_supports_tools
+from .utils import run_async, reset_connection_state, safe_async_call, format_error_message, model_supports_tools, create_download_data
 from .llm_providers import is_openai_reasoning_model, supports_streaming_for_reasoning_model
 
 
@@ -42,7 +42,9 @@ def render_sidebar():
         memory_config = render_memory_configuration()
         
         # MCP Server configuration
-        server_config = render_server_configuration(llm_config, memory_config)
+        render_server_configuration(llm_config, memory_config)
+        
+        st.divider()
         
         # Display available tools
         render_available_tools()
@@ -138,9 +140,9 @@ def render_streaming_configuration(llm_config: Dict) -> None:
             st.session_state.enable_streaming = enable_streaming
             
             if enable_streaming:
-                st.success("✅ Streaming enabled - responses will appear in real-time")
+                st.markdown(":green-badge[ℹ️ Streaming enabled - responses will appear in real-time]")
             else:
-                st.info("ℹ️ Streaming disabled - responses will appear all at once")
+                st.markdown(":blue-badge[ℹ️ Streaming disabled - responses will appear all at once]")
         else:
             st.session_state.enable_streaming = False
             if provider:
@@ -169,7 +171,8 @@ def render_memory_configuration() -> Dict:
             "Memory Type",
             options=["Short-term (Session)", "Persistent (Cross-session)"],
             index=0 if st.session_state.get('memory_type', 'Short-term (Session)') == 'Short-term (Session)' else 1,
-            help="Short-term: Remembers within current session\nPersistent: Remembers across sessions"
+            help="Short-term: Remembers within current session\nPersistent: Remembers across sessions. DISABLED GIVEN PROBLEMS WITH PERSISTENT STORAGE",
+            disabled=True
         )
         st.session_state.memory_type = memory_type
         memory_config["type"] = memory_type
@@ -327,11 +330,11 @@ def render_persistent_storage_actions():
                 thread_id = st.session_state.get('thread_id', 'default')
                 export_data = st.session_state.persistent_storage.export_conversation(thread_id)
                 if export_data:
-                    json_str = json.dumps(export_data, indent=2)
+                    json_str, filename = create_download_data(export_data, f"conversation_{thread_id}")
                     st.download_button(
                         label="📁 Download Export",
                         data=json_str,
-                        file_name=f"conversation_{thread_id}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                        file_name=filename,
                         mime="application/json"
                     )
                 else:
@@ -365,7 +368,7 @@ def render_single_server_config(llm_config: Dict, memory_config: Dict) -> Dict:
         help="Enter the URL of your MCP server (SSE endpoint)"
     )
     
-    if st.button("Connect to MCP Server"):
+    if st.button("Connect to MCP Server", type="primary"):
         return handle_single_server_connection(llm_config, memory_config, server_url)
     
     return {"mode": "single", "connected": False}
@@ -499,10 +502,6 @@ def handle_single_server_connection(llm_config: Dict, memory_config: Dict, serve
                         st.write(f"**Tools found:** {len(st.session_state.tools)}")
                         st.write(f"**Connection timeout:** 1 minute")
                         st.write(f"**SSE read timeout:** 5 minutes")
-                        if st.session_state.tools:
-                            st.write(f"**Available tools:**")
-                            for tool in st.session_state.tools:
-                                st.write(f"  • {tool.name}")
                     return {"mode": "single", "connected": True}
                 else:
                     progress_placeholder.error("❌ Failed to configure agent")
@@ -745,14 +744,14 @@ def render_available_tools():
         total_tools = mcp_tool_count + memory_tool_count
         
         if not supports_tools and st.session_state.get('memory_enabled', False):
-            st.info("📊 Memory enabled (conversation history only - model doesn't support tool calling)")
+            st.info("🧠 Memory enabled (conversation history only - model doesn't support tool calling)")
             st.warning("⚠️ This model doesn't support tools, so the history tool is not available. Memory works through conversation context only.")
         elif mcp_tool_count > 0 and memory_tool_count > 0:
-            st.info(f"📊 {total_tools} tools available ({mcp_tool_count} MCP + {memory_tool_count} memory tool)")
+            st.info(f"🔧 {total_tools} tools available ({mcp_tool_count} MCP + {memory_tool_count} memory tool)")
         elif mcp_tool_count > 0:
-            st.info(f"📊 {mcp_tool_count} MCP tools available")
+            st.info(f"🔧 {mcp_tool_count} MCP tools available")
         elif memory_tool_count > 0:
-            st.info(f"📊 {memory_tool_count} memory tool available")
+            st.info(f"🔧 {memory_tool_count} memory tool available")
         else:
             st.info("📊 No tools available (Chat-only mode)")
         
@@ -800,12 +799,43 @@ def render_tool_selector():
 def render_tool_information(selected_tool_name: str):
     """Render detailed information about the selected tool."""
     if selected_tool_name == "get_conversation_history (Memory)":
-        st.write("**Description:** Retrieve conversation history from the current session")
+        st.write("**Description:** Retrieve conversation history from the current session with advanced filtering and search options")
+        st.write("**Enhanced Features:**")
+        st.write("• Timestamps and message IDs for precise referencing")
+        st.write("• Date range filtering and flexible sorting")
+        st.write("• Rich metadata including tool execution details")
+        st.write("• Advanced search with boolean operators and regex support")
+        
         st.write("**Parameters:**")
         st.code("message_type: string (optional) [default: all]")
-        st.code("last_n_messages: integer (optional) [default: 10]") 
-        st.code("search_query: string (optional)")
-        st.info("💡 This tool allows the agent to access its conversation history when memory is enabled.")
+        st.code("last_n_messages: integer (optional) [default: 10, max: 100]") 
+        st.code("search_query: string (optional) - supports text, boolean ops, regex")
+        st.code("sort_order: string (optional) [default: newest_first]")
+        st.code("date_from: string (optional) [YYYY-MM-DD format]")
+        st.code("date_to: string (optional) [YYYY-MM-DD format]")
+        st.code("include_metadata: boolean (optional) [default: true]")
+        
+        with st.expander("🔍 Advanced Search Examples"):
+            st.write("**Simple Text Search:**")
+            st.code('search_query="weather"')
+            
+            st.write("**Boolean Operators:**")
+            st.code('search_query="weather AND temperature"')
+            st.code('search_query="sunny OR cloudy OR rainy"')
+            st.code('search_query="weather NOT rain"')
+            st.code('search_query="(weather OR climate) AND NOT error"')
+            
+            st.write("**Regex Patterns:**")
+            st.code('search_query="regex:\\\\d{2}°[CF]"  # Find temperatures like "72°F"')
+            st.code('search_query="regex:https?://\\\\S+"  # Find URLs')
+            st.code('search_query="regex:\\\\$\\\\d+(\\\\.\\\\d{2})?"  # Find dollar amounts')
+            st.code('search_query="regex:\\\\b\\\\d{4}-\\\\d{2}-\\\\d{2}\\\\b"  # Find dates')
+            
+            st.write("**Complex Queries:**")
+            st.code('search_query="tool AND (success OR complete) NOT error"')
+            st.code('search_query="regex:API.*key AND NOT expired"')
+        
+        st.info("💡 This enhanced tool provides enterprise-grade conversation history access with powerful search capabilities including boolean logic and regex pattern matching.")
     else:
         # Find the selected MCP tool
         selected_tool = next((tool for tool in st.session_state.tools if tool.name == selected_tool_name), None)

@@ -8,6 +8,7 @@ chat, tool testing, memory management, and about sections.
 import streamlit as st
 import json
 import datetime
+import time
 import traceback
 from typing import Dict, List, Any
 from langchain_core.messages import HumanMessage
@@ -42,44 +43,255 @@ def render_chat_tab():
 
 
 def render_status_indicators():
-    """Render connection and memory status indicators."""
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        connection_status = st.empty()
-        if st.session_state.agent is not None:
-            if st.session_state.client is not None:
-                connection_status.success("📶 Connected to MCP server(s)")
+    """Render enhanced connection and memory status indicators."""
+    # Create a more sophisticated status display
+    with st.container():
+        # Main status row
+        col1, col2, col3 = st.columns([2, 2, 1])
+        
+        with col1:
+            # Connection status with detailed info
+            if st.session_state.agent is not None:
+                if st.session_state.client is not None:
+                    # Connected to MCP server(s)
+                    server_count = len(st.session_state.get('servers', {})) if st.session_state.get('servers') else 1
+                    tool_count = len(st.session_state.get('tools', []))
+                    
+                    with st.status("📶 MCP Connection Active", expanded=False, state="complete"):
+                        if server_count > 1:
+                            st.write(f"**Connected to {server_count} MCP servers**")
+                        else:
+                            st.write("**Connected to MCP server**")
+                        
+                        if tool_count > 0:
+                            st.write(f"🔧 **{tool_count} tools available**")
+                            
+                            # Show tool categories if we have tools
+                            tools = st.session_state.get('tools', [])
+                            if tools:
+                                tool_names = [tool.name for tool in tools[:5]]  # Show first 5
+                                st.write("**Available tools:**")
+                                for tool_name in tool_names:
+                                    st.write(f"• {tool_name}")
+                                if len(tools) > 5:
+                                    st.write(f"• ... and {len(tools) - 5} more")
+                        else:
+                            st.write("⚠️ No tools available")
+                else:
+                    # Chat-only mode
+                    with st.status("💬 Chat-Only Mode", expanded=False, state="complete"):
+                        st.write("**Direct LLM conversation**")
+                        st.write("No MCP server connected")
+                        
+                        # Show model info if available
+                        provider = st.session_state.get('llm_provider', 'Unknown')
+                        model = st.session_state.get('selected_model', 'Unknown')
+                        st.write(f"**Model:** {provider} - {model}")
             else:
-                connection_status.info("💬 Chat-only mode (No MCP server)")
-        else:
-            connection_status.warning("⚠️ Agent not initialized")
+                # No agent initialized
+                with st.status("⚠️ Agent Not Ready", expanded=False, state="error"):
+                    st.write("**Please initialize an agent:**")
+                    st.write("• Connect to MCP server, or")
+                    st.write("• Start chat-only mode")
+                    st.write("Use the sidebar to get started!")
+        
+        with col2:
+            # Memory status with detailed info
+            memory_enabled = st.session_state.get('memory_enabled', False)
+            
+            if memory_enabled:
+                memory_type = st.session_state.get('memory_type', 'Short-term (Session)')
+                thread_id = st.session_state.get('thread_id', 'default')
+                chat_length = len(st.session_state.get('chat_history', []))
+                max_messages = st.session_state.get('max_messages', 100)
+                
+                memory_status_label = "🧠 Memory Active"
+                if memory_type == "Persistent (Cross-session)":
+                    memory_status_label += " (Persistent)"
+                
+                with st.status(memory_status_label, expanded=False, state="complete"):
+                    st.write(f"**Type:** {memory_type.split()[0]}")
+                    st.write(f"**Thread:** {thread_id}")
+                    st.write(f"**Messages:** {chat_length}/{max_messages}")
+                    
+                    # Memory usage indicator
+                    usage_percent = (chat_length / max_messages) * 100
+                    if usage_percent > 80:
+                        st.warning(f"Memory usage: {usage_percent:.1f}% (Consider clearing)")
+                    elif usage_percent > 50:
+                        st.info(f"Memory usage: {usage_percent:.1f}%")
+                    else:
+                        st.success(f"Memory usage: {usage_percent:.1f}%")
+                    
+                    # Show persistent storage info if applicable
+                    if (memory_type == "Persistent (Cross-session)" and 
+                        hasattr(st.session_state, 'persistent_storage')):
+                        db_stats = st.session_state.persistent_storage.get_database_stats()
+                        st.write(f"**Database:** {db_stats.get('conversation_count', 0)} conversations")
+            else:
+                with st.status("🧠 Memory Disabled", expanded=False, state="running"):
+                    st.write("**No conversation memory**")
+                    st.write("Each message is independent")
+                    st.info("Enable memory in sidebar for context retention")
+        
+        with col3:
+            # Quick actions and settings
+            with st.container():
+                # Streaming status
+                streaming_enabled = st.session_state.get('enable_streaming', True)
+                if streaming_enabled:
+                    st.success("🌊 Streaming ON")
+                else:
+                    st.info("🌊 Streaming OFF")
+                
+                # Configuration status
+                custom_config = st.session_state.get('config_use_custom_settings', False)
+                if custom_config:
+                    st.info("⚙️ Custom Config")
+                else:
+                    st.text("⚙️ Default Config")
     
-    with col2:
-        memory_status = st.empty()
-        if st.session_state.get('memory_enabled', False):
-            thread_id = st.session_state.get('thread_id', 'default')
-            memory_status.info(f"🧠 Memory enabled (Thread: {thread_id})")
-        else:
-            memory_status.info("🧠 Memory disabled")
+    # Show recent activity if available
+    recent_tools = st.session_state.get('tool_executions', [])
+    if recent_tools:
+        with st.expander("🔄 Recent Activity", expanded=False):
+            # Show last 3 tool executions
+            for tool_exec in recent_tools[-3:]:
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.write(f"🔧 **{tool_exec['tool_name']}**")
+                with col2:
+                    st.caption(tool_exec.get('timestamp', 'Unknown'))
 
 
 def render_chat_history():
-    """Render the chat history display."""
-    for message in st.session_state.chat_history:
+    """Render the enhanced chat history display with better formatting."""
+    if not st.session_state.chat_history:
+        # Show welcome message when no chat history
+        with st.container():
+            st.markdown("""
+            <div style="text-align: center; padding: 2rem; background-color: #f0f2f6; border-radius: 10px; margin: 1rem 0;">
+                <h3>👋 Welcome to your Streamlit MCP Playground!</h3>
+                <p>Start a conversation by typing a message below. I can help you with various tasks using connected tools.</p>
+            </div>
+            """, unsafe_allow_html=True)
+        return
+    
+    # Display conversation statistics
+    with st.expander("📊 Conversation Stats", expanded=False):
+        user_msgs = len([m for m in st.session_state.chat_history if m["role"] == "user"])
+        assistant_msgs = len([m for m in st.session_state.chat_history if m["role"] == "assistant"])
+        tool_executions = len(st.session_state.get('tool_executions', []))
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Your Messages", user_msgs)
+        with col2:
+            st.metric("AI Responses", assistant_msgs)
+        with col3:
+            st.metric("Tools Used", tool_executions)
+    
+    st.divider()
+    
+    # Display chat messages with enhanced formatting
+    for i, message in enumerate(st.session_state.chat_history):
         if message["role"] == "user":
-            st.chat_message("user").write(message["content"])
-        if message["role"] == "assistant" and "tool" in message and message["tool"]:
-            st.code(message['tool'])
-        if message["role"] == "assistant":
-            st.chat_message("assistant").write(message["content"])
+            with st.chat_message("user", avatar="👤"):
+                st.write(message["content"])
+                
+                # Show timestamp if available
+                if "timestamp" in message:
+                    st.caption(f"Sent at {message['timestamp']}")
+        
+        elif message["role"] == "assistant":
+            with st.chat_message("assistant", avatar="🤖"):
+                # Show any tool executions that happened with this response
+                if "tool" in message and message["tool"]:
+                    with st.status("🔧 Tool executions for this response", expanded=False, state="complete"):
+                        st.code(message['tool'], language="text")
+                
+                # Display the main response
+                st.write(message["content"])
+                
+                # Show timestamp, model info, and response time if available
+                if "timestamp" in message:
+                    caption_parts = [f"Generated at {message['timestamp']}"]
+                    
+                    # Add model information
+                    if "model_provider" in message and "model_name" in message:
+                        model_info = f"{message['model_provider']} - {message['model_name']}"
+                        caption_parts.append(f"Model: {model_info}")
+                    
+                    # Add response time
+                    if "response_time" in message:
+                        response_time = message['response_time']
+                        if response_time < 1:
+                            time_str = f"{response_time*1000:.0f}ms"
+                        else:
+                            time_str = f"{response_time:.1f}s"
+                        caption_parts.append(f"Response time: {time_str}")
+                    
+                    st.caption(" • ".join(caption_parts))
+                
+                # Show related tool executions from session state
+                message_tools = get_tools_for_message_index(i)
+                if message_tools:
+                    with st.expander(f"🔍 View tool details ({len(message_tools)} tools used)", expanded=False):
+                        for tool_exec in message_tools:
+                            with st.container():
+                                st.write(f"**🔧 {tool_exec['tool_name']}**")
+                                
+                                col1, col2 = st.columns([1, 1])
+                                with col1:
+                                    if tool_exec.get('input'):
+                                        st.write("**Input:**")
+                                        if isinstance(tool_exec['input'], dict):
+                                            st.json(tool_exec['input'], expanded=False)
+                                        else:
+                                            st.text(str(tool_exec['input']))
+                                
+                                with col2:
+                                    st.write("**Output:**")
+                                    output = tool_exec.get('output', '')
+                                    if isinstance(output, str) and len(output) > 200:
+                                        st.text(output[:200] + "...")
+                                        st.caption("(Output truncated - full output available in tool execution details)")
+                                    elif isinstance(output, (dict, list)):
+                                        st.json(output, expanded=False)
+                                    else:
+                                        st.text(str(output))
+                                
+                                st.caption(f"Executed at {tool_exec.get('timestamp', 'Unknown time')}")
+                                st.divider()
+
+
+def get_tools_for_message_index(message_index: int) -> List[Dict]:
+    """Get tool executions that are related to a specific message index."""
+    # Check if this specific message has associated tool executions
+    if message_index < len(st.session_state.chat_history):
+        message = st.session_state.chat_history[message_index]
+        
+        # Return tool executions that are directly associated with this message
+        return message.get('tool_executions', [])
+    
+    return []
 
 
 def handle_chat_input():
     """Handle chat input and agent processing."""
     if user_input := st.chat_input("Type your message here..."):
-        # Add user message to chat history
-        st.session_state.chat_history.append({"role": "user", "content": user_input})
+        # Add user message to chat history with metadata
+        current_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        message_count = len(st.session_state.chat_history) + 1
+        message_id = f"msg_{message_count:04d}"
+        
+        user_message = {
+            "role": "user", 
+            "content": user_input,
+            "timestamp": current_time,
+            "message_id": message_id
+        }
+        st.session_state.chat_history.append(user_message)
         st.chat_message("user").write(user_input)
         
         # Check if agent is set up
@@ -104,33 +316,87 @@ def process_user_message(user_input: str):
 
 
 def process_streaming_response(user_input: str):
-    """Process user message with streaming response."""
+    """Process user message with enhanced streaming using st.status and st.write_stream."""
+    # Track response timing
+    start_time = time.time()
+    
     # Prepare agent invocation config
     config = prepare_agent_invocation_config(
         memory_enabled=st.session_state.get('memory_enabled', False),
         thread_id=st.session_state.get('thread_id', 'default')
     )
     
-    # Create container for streaming response
-    response_container = st.empty()
+    # Initialize tracking variables
     current_response = ""
     tool_executions = []
     
-    try:
-        with st.spinner("Thinking..."):
-            # Use the proper async generator handling from utils
+    # Create main status container for overall processing
+    with st.status("🤖 Processing your request...", expanded=True) as main_status:
+        try:
+            # Step 1: Initialize agent processing
+            st.write("🧠 **Agent initialized** - Analyzing your request...")
+            
+            # Create async generator processing function
             async def process_streaming():
                 nonlocal current_response, tool_executions
                 
+                # Track different phases
+                thinking_phase = True
+                tool_phase = False
+                response_phase = False
+                
                 async for event in stream_agent_events(st.session_state.agent, user_input, config):
                     event_type = event.get("event")
+                    event_name = event.get("name", "")
                     
-                    if event_type == "on_chat_model_stream":
+                    # Handle different event types with enhanced status updates
+                    if event_type == "on_chain_start":
+                        if "agent" in event_name.lower():
+                            st.write("🔍 **Agent reasoning** - Planning approach...")
+                            thinking_phase = True
+                    
+                    elif event_type == "on_tool_start":
+                        # Tool execution started
+                        tool_name = event.get("name", "Unknown")
+                        tool_input = event.get("data", {}).get("input", {})
+                        
+                        if thinking_phase:
+                            st.write("✅ **Planning complete** - Ready to execute tools")
+                            thinking_phase = False
+                            tool_phase = True
+                        
+                        # Track tool execution without nested status
+                        st.write(f"🔧 **Starting tool:** {tool_name}")
+                        if tool_input:
+                            st.write(f"   📝 Input: {str(tool_input)[:100]}{'...' if len(str(tool_input)) > 100 else ''}")
+                    
+                    elif event_type == "on_tool_end":
+                        # Tool execution completed
+                        tool_name = event.get("name", "Unknown")
+                        tool_output = event.get("data", {}).get("output", "")
+                        tool_input = event.get("data", {}).get("input", {})
+                        
+                        st.write(f"✅ **Completed tool:** {tool_name}")
+                        
+                        # Store tool execution data
+                        tool_executions.append({
+                            "tool_name": tool_name,
+                            "input": tool_input,
+                            "output": tool_output,
+                            "timestamp": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        })
+                    
+                    elif event_type == "on_chat_model_start":
+                        if tool_phase:
+                            st.write("🎯 **Tool execution complete** - Generating response...")
+                            tool_phase = False
+                            response_phase = True
+                    
+                    elif event_type == "on_chat_model_stream":
                         # Handle streaming tokens from the chat model
                         chunk = event.get("data", {}).get("chunk", {})
                         if hasattr(chunk, 'content') and chunk.content:
                             current_response += chunk.content
-                            response_container.markdown(current_response)
                     
                     elif event_type == "on_chat_model_end":
                         # Model finished generating
@@ -141,30 +407,6 @@ def process_streaming_response(user_input: str):
                                 current_response = final_response.content
                             elif isinstance(final_response, str):
                                 current_response = final_response
-                            response_container.markdown(current_response)
-                    
-                    elif event_type == "on_tool_start":
-                        # Tool execution started
-                        tool_name = event.get("name", "Unknown")
-                        current_response += f"\n\n🔧 Using tool: {tool_name}..."
-                        response_container.markdown(current_response)
-                    
-                    elif event_type == "on_tool_end":
-                        # Tool execution completed
-                        tool_name = event.get("name", "Unknown")
-                        current_response += f" ✅"
-                        response_container.markdown(current_response)
-                        
-                        # Extract tool execution data
-                        tool_output = event.get("data", {}).get("output", "")
-                        tool_input = event.get("data", {}).get("input", {})
-                        
-                        tool_executions.append({
-                            "tool_name": tool_name,
-                            "input": tool_input,
-                            "output": tool_output,
-                            "timestamp": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        })
                 
                 return current_response, tool_executions
             
@@ -174,20 +416,70 @@ def process_streaming_response(user_input: str):
                 final_response, final_tool_executions = result
                 current_response = final_response or current_response
                 tool_executions = final_tool_executions or tool_executions
+            
+            # Update main status to show response generation
+            if current_response:
+                main_status.update(
+                    label="💬 Generating response...",
+                    state="running"
+                )
+                st.write("📝 **Response ready** - Streaming to you now...")
                 
-    except Exception as e:
-        st.error(f"❌ Streaming failed: {str(e)}")
-        st.info("🔄 Falling back to non-streaming mode...")
-        process_non_streaming_response(user_input)
-        return
+        except Exception as e:
+            main_status.update(
+                label="❌ Processing failed",
+                state="error"
+            )
+            st.error(f"Streaming failed: {str(e)}")
+            st.info("🔄 Falling back to non-streaming mode...")
+            process_non_streaming_response(user_input)
+            return
     
-    # Store the response in chat history
+    # Stream the final response using st.write_stream if we have content
     if current_response:
-        st.session_state.chat_history.append({"role": "assistant", "content": current_response})
+        # Create a generator for streaming the response
+        def response_generator():
+            words = current_response.split()
+            for i, word in enumerate(words):
+                if i == 0:
+                    yield word
+                else:
+                    yield " " + word
+                # Add small delay for better visual effect
+                time.sleep(0.02)
+        
+        # Use st.write_stream for the typewriter effect
+        streamed_response = st.write_stream(response_generator())
+        
+        # Store the response in chat history with timing and model info
+        end_time = time.time()
+        response_time = end_time - start_time
+        current_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        message_count = len(st.session_state.chat_history) + 1
+        message_id = f"msg_{message_count:04d}"
+        
+        # Get model information
+        model_provider = st.session_state.get('llm_provider', 'Unknown')
+        model_name = st.session_state.get('selected_model', 'Unknown')
+        
+        assistant_message = {
+            "role": "assistant", 
+            "content": current_response,
+            "timestamp": current_time,
+            "message_id": message_id,
+            "model_provider": model_provider,
+            "model_name": model_name,
+            "response_time": response_time
+        }
+        st.session_state.chat_history.append(assistant_message)
     
-    # Handle tool executions if any occurred
+    # Handle tool executions summary
     if tool_executions:
-        # Remove duplicates and add to session state
+        # Associate tool executions with the last assistant message
+        if st.session_state.chat_history and st.session_state.chat_history[-1]["role"] == "assistant":
+            st.session_state.chat_history[-1]["tool_executions"] = tool_executions
+        
+        # Also add to global tool executions for the test tools tab
         existing_executions = st.session_state.get('tool_executions', [])
         new_executions = []
         
@@ -201,14 +493,24 @@ def process_streaming_response(user_input: str):
                 new_executions.append(execution)
         
         if new_executions:
+            if 'tool_executions' not in st.session_state:
+                st.session_state.tool_executions = []
             st.session_state.tool_executions.extend(new_executions)
-            st.success(f"🔧 Executed {len(new_executions)} tool(s)")
+            
+            # Show execution summary with enhanced status
+            with st.status(f"📊 Tool Execution Summary", expanded=False, state="complete"):
+                st.write(f"**Executed {len(new_executions)} tool(s) successfully:**")
+                for execution in new_executions:
+                    st.write(f"• **{execution['tool_name']}** at {execution['timestamp']}")
     
     st.rerun()
 
 
 def process_non_streaming_response(user_input: str):
     """Process user message with non-streaming response (original implementation)."""
+    # Track response timing
+    start_time = time.time()
+    
     with st.spinner("Thinking..."):
         try:
             # Prepare agent invocation config
@@ -244,14 +546,37 @@ def process_non_streaming_response(user_input: str):
             
             if assistant_response:
                 st.write(assistant_response)
-                # Add to chat history
-                st.session_state.chat_history.append({"role": "assistant", "content": assistant_response})
+                # Add to chat history with metadata, timing, and model info
+                end_time = time.time()
+                response_time = end_time - start_time
+                current_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                message_count = len(st.session_state.chat_history) + 1
+                message_id = f"msg_{message_count:04d}"
+                
+                # Get model information
+                model_provider = st.session_state.get('llm_provider', 'Unknown')
+                model_name = st.session_state.get('selected_model', 'Unknown')
+                
+                assistant_message = {
+                    "role": "assistant", 
+                    "content": assistant_response,
+                    "timestamp": current_time,
+                    "message_id": message_id,
+                    "model_provider": model_provider,
+                    "model_name": model_name,
+                    "response_time": response_time
+                }
+                st.session_state.chat_history.append(assistant_message)
             else:
                 st.warning("No response content found.")
             
             # Store tool executions in session state for the test tools tab
             if tool_executions:
-                # Remove duplicates based on timestamp and tool name to avoid repeated entries
+                # Associate tool executions with the last assistant message
+                if st.session_state.chat_history and st.session_state.chat_history[-1]["role"] == "assistant":
+                    st.session_state.chat_history[-1]["tool_executions"] = tool_executions
+                
+                # Also add to global tool executions for the test tools tab
                 existing_executions = st.session_state.get('tool_executions', [])
                 new_executions = []
                 
@@ -265,8 +590,15 @@ def process_non_streaming_response(user_input: str):
                         new_executions.append(execution)
                 
                 if new_executions:
+                    if 'tool_executions' not in st.session_state:
+                        st.session_state.tool_executions = []
                     st.session_state.tool_executions.extend(new_executions)
-                    st.success(f"🔧 Executed {len(new_executions)} tool(s)")
+                    
+                    # Show execution summary with enhanced status (consistent with streaming)
+                    with st.status(f"📊 Tool Execution Summary", expanded=False, state="complete"):
+                        st.write(f"**Executed {len(new_executions)} tool(s) successfully:**")
+                        for execution in new_executions:
+                            st.write(f"• **{execution['tool_name']}** at {execution['timestamp']}")
                 
         except Exception as e:
             error_msg = format_error_message(e)
@@ -1063,30 +1395,35 @@ def render_import_memory_action():
             memory_data = json.load(uploaded_file)
             
             # Validate and preview the memory data
-            if 'chat_history' in memory_data:
-                chat_history = memory_data['chat_history']
+            if 'messages' in memory_data:
+                messages = memory_data['messages']
                 memory_settings = memory_data.get('memory_settings', {})
+                format_version = memory_data.get('format_version', 'Unknown')
                 
                 # Show preview information
                 st.info(f"📋 **Memory File Preview:**")
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.write(f"• **Messages:** {len(chat_history)}")
+                    st.write(f"• **Messages:** {len(messages)}")
                     st.write(f"• **Thread ID:** {memory_data.get('thread_id', 'default')}")
                 with col2:
+                    st.write(f"• **Format Version:** {format_version}")
                     st.write(f"• **Memory Type:** {memory_settings.get('memory_type', 'Unknown')}")
-                    st.write(f"• **Max Messages:** {memory_settings.get('max_messages', 'Unknown')}")
                 
                 # Show first few messages as preview
-                if len(chat_history) > 0:
+                if len(messages) > 0:
                     with st.expander("📝 Preview First Few Messages"):
-                        for i, msg in enumerate(chat_history[:3]):
+                        for i, msg in enumerate(messages[:3]):
                             role_icon = "👤" if msg.get('role') == 'user' else "🤖"
                             content_preview = str(msg.get('content', ''))[:100] + "..." if len(str(msg.get('content', ''))) > 100 else str(msg.get('content', ''))
                             st.write(f"**{role_icon} {msg.get('role', 'unknown').title()}:** {content_preview}")
+                            
+                            # Show tool executions if present
+                            if msg.get('tool_executions'):
+                                st.write(f"   🔧 {len(msg['tool_executions'])} tool execution(s)")
                         
-                        if len(chat_history) > 3:
-                            st.write(f"... and {len(chat_history) - 3} more messages")
+                        if len(messages) > 3:
+                            st.write(f"... and {len(messages) - 3} more messages")
                 
                 # Warning about current chat history
                 current_history_count = len(st.session_state.get('chat_history', []))
@@ -1098,7 +1435,7 @@ def render_import_memory_action():
                 with col1:
                     if st.button("✅ Confirm Import", type="primary", key="confirm_import_btn"):
                         # Actually perform the import
-                        st.session_state.chat_history = chat_history
+                        st.session_state.chat_history = messages
                         
                         # Apply memory settings if available
                         if memory_settings:
@@ -1113,7 +1450,7 @@ def render_import_memory_action():
                         if 'thread_id' in memory_data:
                             st.session_state.thread_id = memory_data['thread_id']
                         
-                        st.success(f"✅ Successfully imported {len(chat_history)} messages!")
+                        st.success(f"✅ Successfully imported {len(messages)} messages!")
                         st.rerun()
                 
                 with col2:
@@ -1121,44 +1458,9 @@ def render_import_memory_action():
                         st.info("Import cancelled")
                         st.rerun()
                         
-            elif 'messages' in memory_data:
-                # Handle alternative format
-                messages = memory_data['messages']
-                
-                st.info(f"📋 **Legacy Memory File Preview:**")
-                st.write(f"• **Messages:** {len(messages)}")
-                
-                # Show preview
-                if len(messages) > 0:
-                    with st.expander("📝 Preview First Few Messages"):
-                        for i, msg in enumerate(messages[:3]):
-                            role_icon = "👤" if msg.get('role') == 'user' else "🤖"
-                            content_preview = str(msg.get('content', ''))[:100] + "..." if len(str(msg.get('content', ''))) > 100 else str(msg.get('content', ''))
-                            st.write(f"**{role_icon} {msg.get('role', 'unknown').title()}:** {content_preview}")
-                        
-                        if len(messages) > 3:
-                            st.write(f"... and {len(messages) - 3} more messages")
-                
-                # Warning about current chat history
-                current_history_count = len(st.session_state.get('chat_history', []))
-                if current_history_count > 0:
-                    st.warning(f"⚠️ This will replace your current chat history ({current_history_count} messages)")
-                
-                # Confirmation buttons
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("✅ Confirm Import", type="primary", key="confirm_legacy_import_btn"):
-                        st.session_state.chat_history = messages
-                        st.success(f"✅ Successfully imported {len(messages)} messages!")
-                        st.rerun()
-                
-                with col2:
-                    if st.button("❌ Cancel", key="cancel_legacy_import_btn"):
-                        st.info("Import cancelled")
-                        st.rerun()
-                        
             else:
-                st.error("❌ Invalid memory export file - no 'chat_history' or 'messages' found")
+                st.error("❌ Invalid memory export file - no 'messages' field found")
+                st.info("💡 This app only supports the current enhanced memory format (v3.0+)")
                 
         except json.JSONDecodeError:
             st.error("❌ Invalid JSON file")
@@ -1206,8 +1508,22 @@ def render_filtered_history():
             elif message["role"] == "assistant" and show_assistant:
                 with st.expander(f"🤖 Assistant Message #{i+1}"):
                     st.write(message["content"])
-                    if show_tools and "tool" in message and message["tool"]:
-                        st.code(message["tool"], language="text")
+                    if show_tools and message.get("tool_executions"):
+                        st.write("**Tool Executions:**")
+                        for j, exec_info in enumerate(message["tool_executions"]):
+                            st.write(f"• **{exec_info.get('tool_name', 'Unknown')}** at {exec_info.get('timestamp', 'Unknown time')}")
+                            if exec_info.get("input"):
+                                st.write("Input:")
+                                if isinstance(exec_info["input"], dict):
+                                    st.json(exec_info["input"], expanded=False)
+                                else:
+                                    st.code(str(exec_info["input"]), language="text")
+                            if exec_info.get("output"):
+                                st.write("Output:")
+                                if isinstance(exec_info["output"], (dict, list)):
+                                    st.json(exec_info["output"], expanded=False)
+                                else:
+                                    st.code(str(exec_info["output"]), language="text")
 
 
 def render_memory_statistics():
@@ -1283,9 +1599,34 @@ def display_tool_executions():
         with st.expander("Tool Execution History", expanded=False):
             for i, exec_record in enumerate(st.session_state.tool_executions):
                 st.markdown(f"### Execution #{i+1}: `{exec_record['tool_name']}`")
-                st.markdown(f"**Input:** ```json{json.dumps(exec_record['input'])}```")
-                st.markdown(f"**Output:** ```{exec_record['output']}```")
-                st.markdown(f"**Time:** {exec_record['timestamp']}")
+                
+                # Display input properly formatted
+                st.write("**Input:**")
+                try:
+                    if isinstance(exec_record['input'], dict):
+                        st.json(exec_record['input'], expanded=False)
+                    else:
+                        # Try to parse as JSON if it's a string
+                        try:
+                            import json
+                            parsed_input = json.loads(str(exec_record['input']))
+                            st.json(parsed_input, expanded=False)
+                        except (json.JSONDecodeError, TypeError):
+                            # If not valid JSON, display as plain text
+                            st.code(str(exec_record['input']), language="text")
+                except Exception:
+                    # Fallback to text display
+                    st.code(str(exec_record['input']), language="text")
+                
+                # Display output properly formatted
+                st.write("**Output:**")
+                output = exec_record['output']
+                if isinstance(output, (dict, list)):
+                    st.json(output, expanded=False)
+                else:
+                    st.code(str(output), language="text")
+                
+                st.write(f"**Time:** {exec_record['timestamp']}")
                 st.divider()
 
 
@@ -1848,4 +2189,4 @@ def render_export_config_action():
             data=json_str,
             file_name=filename,
             mime="application/json"
-        ) 
+        )
