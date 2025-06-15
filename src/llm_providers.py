@@ -193,7 +193,8 @@ def create_llm_model(
     max_tokens: Optional[int] = None,
     timeout: Optional[float] = None,
     system_prompt: Optional[str] = None,
-    streaming: bool = True
+    streaming: bool = True,
+    ollama_url: Optional[str] = None
 ):
     """Create a language model based on the selected provider with advanced configuration."""
     # Check if this is an OpenAI reasoning model
@@ -260,7 +261,12 @@ def create_llm_model(
             **google_params
         )
     elif llm_provider == "Ollama":
-        llm = ChatOllama(**common_params)
+        # Add Ollama-specific parameters
+        ollama_params = common_params.copy()
+        if ollama_url:
+            ollama_params["base_url"] = ollama_url
+        
+        llm = ChatOllama(**ollama_params)
     else:
         raise ValueError(f"Unsupported LLM provider: {llm_provider}")
     

@@ -169,7 +169,7 @@ def render_chat_history():
         with st.container():
             st.markdown("""
             <div style="text-align: center; padding: 2rem; background-color: #f0f2f6; border-radius: 10px; margin: 1rem 0;">
-                <h3>👋 Welcome to your Streamlit MCP Playground!</h3>
+                <h3>👋 Welcome to your MCP Playground!</h3>
                 <p>Start a conversation by typing a message below. I can help you with various tasks using connected tools.</p>
             </div>
             """, unsafe_allow_html=True)
@@ -213,12 +213,12 @@ def render_chat_history():
                 
                 # Show timestamp, model info, and response time if available
                 if "timestamp" in message:
-                    caption_parts = [f"Generated at {message['timestamp']}"]
+                    caption_parts = [f"🕒 {message['timestamp']}"]
                     
                     # Add model information
                     if "model_provider" in message and "model_name" in message:
                         model_info = f"{message['model_provider']} - {message['model_name']}"
-                        caption_parts.append(f"Model: {model_info}")
+                        caption_parts.append(f"🤖 {model_info}")
                     
                     # Add response time
                     if "response_time" in message:
@@ -227,7 +227,7 @@ def render_chat_history():
                             time_str = f"{response_time*1000:.0f}ms"
                         else:
                             time_str = f"{response_time:.1f}s"
-                        caption_parts.append(f"Response time: {time_str}")
+                        caption_parts.append(f"⌛ {time_str}")
                     
                     st.caption(" • ".join(caption_parts))
                 

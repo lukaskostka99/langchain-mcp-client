@@ -9,7 +9,8 @@ import streamlit as st
 import json
 import datetime
 import traceback
-from typing import Dict, List, Optional
+import aiohttp
+from typing import Dict, List, Optional, Tuple
 
 from .database import PersistentStorageManager
 from .llm_providers import (
@@ -23,6 +24,24 @@ from .mcp_client import (
 from .agent_manager import create_agent_with_tools
 from .utils import run_async, reset_connection_state, safe_async_call, format_error_message, model_supports_tools, create_download_data
 from .llm_providers import is_openai_reasoning_model, supports_streaming_for_reasoning_model
+
+
+async def test_ollama_connection(base_url: str = "http://localhost:11434") -> Tuple[bool, List[str]]:
+    """Test if Ollama API is accessible and return available models"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{base_url}/api/tags",
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    models = [model["name"] for model in result.get("models", [])]
+                    return True, models
+                else:
+                    return False, []
+    except Exception as e:
+        return False, []
 
 
 def render_sidebar():
@@ -62,18 +81,114 @@ def render_llm_configuration() -> Dict:
     # Store LLM provider in session state for Config tab
     st.session_state.llm_provider = llm_provider
     
+    # Handle Ollama specially
+    if llm_provider == "Ollama":
+        return render_ollama_configuration()
+    else:
+        return render_standard_llm_configuration(llm_provider)
+
+
+def render_ollama_configuration() -> Dict:
+    """Render Ollama-specific configuration with dynamic model fetching."""
+    # Ollama server URL configuration
+    ollama_url = st.text_input(
+        "Ollama Server URL",
+        value="http://localhost:11434",
+        help="URL of your Ollama server (default: http://localhost:11434)"
+    )
+    
+    # Connection test and model fetching
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        if st.button("Connect to Ollama", type="primary"):
+            with st.spinner("Testing Ollama connection..."):
+                success, models = run_async(test_ollama_connection(ollama_url))
+                
+                if success and models:
+                    st.session_state.ollama_connected = True
+                    st.session_state.ollama_models = models
+                    st.session_state.ollama_url = ollama_url
+                elif success and not models:
+                    st.session_state.ollama_connected = True
+                    st.session_state.ollama_models = []
+                    st.session_state.ollama_url = ollama_url
+                    st.warning("⚠️ Connected but no models found. Make sure you have models installed.")
+                    st.info("💡 Install models using: `ollama pull <model-name>`")
+                else:
+                    st.session_state.ollama_connected = False
+                    st.session_state.ollama_models = []
+                    st.error("❌ Failed to connect to Ollama")
+                    st.info("💡 Make sure Ollama is running: `ollama serve`")
+    
+    with col2:
+        # Show connection status
+        if st.session_state.get('ollama_connected', False):
+            st.badge("Connected", icon="🟢", color="green")
+        else:
+            st.badge("Not Connected", icon="🔴", color="red")
+    
+    # Model selection
+    if st.session_state.get('ollama_connected', False):
+        available_models = st.session_state.get('ollama_models', [])
+        
+        if available_models:
+            # Show available models            
+            st.write("**Available Models:**")
+            model_count = len(st.session_state.get('ollama_models', []))
+            st.badge(f"{model_count} models available", icon="ℹ️", color="blue")
+            model_name = st.selectbox(
+                "Select Model",
+                options=available_models,
+                index=0,
+                key="ollama_model_selector"
+            )
+            
+        else:
+            st.warning("⚠️ No models found on Ollama server")
+            st.info("Install models using: `ollama pull <model-name>`")
+            
+            # Fallback to manual model input
+            model_name = st.text_input(
+                "Manual Model Name",
+                placeholder="Enter model name (e.g. llama3.2, granite3.3:8b)",
+                help="Enter the exact model name if you know it exists"
+            )
+            
+            if not model_name:
+                model_name = "llama3"  # Default fallback
+    else:
+        # Not connected - show manual input
+        st.info("Click 'Connect to Ollama' first to see available models")
+        model_name = st.text_input(
+            "Model Name",
+            value="granite3.3:8b",
+            placeholder="Enter Ollama model name",
+            help="Enter the model name. Connect to see available models."
+        )
+    
+    # Store selected model in session state for Config tab
+    st.session_state.selected_model = model_name
+    
+    return {
+        "provider": "Ollama",
+        "api_key": "",  # Ollama doesn't need API key
+        "model": model_name,
+        "ollama_url": ollama_url
+    }
+
+
+def render_standard_llm_configuration(llm_provider: str) -> Dict:
+    """Render standard LLM configuration for non-Ollama providers."""
     # API Key input
-    api_key_disabled = not requires_api_key(llm_provider)
     api_key = st.text_input(
         f"{llm_provider} API Key",
         type="password",
-        help=f"Enter your {llm_provider} API Key",
-        disabled=api_key_disabled
+        help=f"Enter your {llm_provider} API Key"
     )
     
-    # Store API key in session state for Config tab (only if not disabled)
-    if not api_key_disabled:
-        st.session_state.api_key = api_key
+    # Store API key in session state for Config tab
+    st.session_state.api_key = api_key
     
     # Model selection
     model_options = get_provider_models(llm_provider)
@@ -90,7 +205,6 @@ def render_llm_configuration() -> Dict:
     # Custom model input for providers that support "Other"
     if model_name == "Other":
         placeholder_text = {
-            "Ollama": "Enter custom Ollama model name (e.g. llama3)",
             "OpenAI": "Enter custom OpenAI model name (e.g. gpt-4-turbo, o1-mini, o3-mini)",
             "Anthropic": "Enter custom Anthropic model name (e.g. claude-3-sonnet-20240229)",
             "Google": "Enter custom Google model name (e.g. gemini-pro)"
@@ -438,8 +552,17 @@ def render_chat_only_config(llm_config: Dict, memory_config: Dict) -> Dict:
 
 def handle_single_server_connection(llm_config: Dict, memory_config: Dict, server_url: str) -> Dict:
     """Handle single server connection logic with improved error handling."""
-    if not llm_config["api_key"] and requires_api_key(llm_config["provider"]):
+    # Check API key requirement for non-Ollama providers
+    if (llm_config["provider"] != "Ollama" and 
+        not llm_config["api_key"] and 
+        requires_api_key(llm_config["provider"])):
         st.error(f"Please enter your {llm_config['provider']} API Key")
+        return {"mode": "single", "connected": False}
+    
+    # Check Ollama connection if it's the selected provider
+    if (llm_config["provider"] == "Ollama" and 
+        not st.session_state.get('ollama_connected', False)):
+        st.error("Please test Ollama connection first")
         return {"mode": "single", "connected": False}
     elif not server_url:
         st.error("Please enter a valid MCP Server URL")
@@ -528,8 +651,17 @@ def handle_single_server_connection(llm_config: Dict, memory_config: Dict, serve
 
 def handle_multiple_servers_connection(llm_config: Dict, memory_config: Dict) -> Dict:
     """Handle multiple servers connection logic with improved error handling."""
-    if not llm_config["api_key"] and requires_api_key(llm_config["provider"]):
+    # Check API key requirement for non-Ollama providers
+    if (llm_config["provider"] != "Ollama" and 
+        not llm_config["api_key"] and 
+        requires_api_key(llm_config["provider"])):
         st.error(f"Please enter your {llm_config['provider']} API Key")
+        return {"mode": "multiple", "connected": False}
+    
+    # Check Ollama connection if it's the selected provider
+    if (llm_config["provider"] == "Ollama" and 
+        not st.session_state.get('ollama_connected', False)):
+        st.error("Please test Ollama connection first")
         return {"mode": "multiple", "connected": False}
     elif not st.session_state.servers:
         st.error("Please add at least one server")
@@ -597,8 +729,17 @@ def handle_multiple_servers_connection(llm_config: Dict, memory_config: Dict) ->
 
 def handle_chat_only_connection(llm_config: Dict, memory_config: Dict) -> Dict:
     """Handle chat-only mode connection logic."""
-    if not llm_config["api_key"] and requires_api_key(llm_config["provider"]):
+    # Check API key requirement for non-Ollama providers
+    if (llm_config["provider"] != "Ollama" and 
+        not llm_config["api_key"] and 
+        requires_api_key(llm_config["provider"])):
         st.error(f"Please enter your {llm_config['provider']} API Key")
+        return {"mode": "chat_only", "connected": False}
+    
+    # Check Ollama connection if it's the selected provider
+    if (llm_config["provider"] == "Ollama" and 
+        not st.session_state.get('ollama_connected', False)):
+        st.error("Please test Ollama connection first")
         return {"mode": "chat_only", "connected": False}
     
     with st.spinner("Initializing chat agent..."):
@@ -669,7 +810,8 @@ def create_and_configure_agent(llm_config: Dict, memory_config: Dict, mcp_tools:
             temperature=temperature,
             max_tokens=max_tokens,
             timeout=timeout,
-            system_prompt=system_prompt
+            system_prompt=system_prompt,
+            ollama_url=llm_config.get("ollama_url")
         )
         
         # Get persistent storage if needed
