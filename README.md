@@ -2,6 +2,8 @@
 
 This Streamlit application provides a user interface for connecting to MCP (Model Context Protocol) servers and interacting with them using different LLM providers (OpenAI, Anthropic, Google, Ollama).
 
+![App Screenshot](screenshot1.png)
+
 ## ⚠️ Development Status
 
 **This application is currently in active development.** While functional, you may encounter bugs, incomplete features, or unexpected behavior. We appreciate your patience and welcome feedback to help improve the application.
@@ -21,6 +23,8 @@ This Streamlit application provides a user interface for connecting to MCP (Mode
 - **Comprehensive Logging**: Track all tool executions and conversations
 - **Export/Import**: Save and load conversation history
 - **Containerized Deployment**: Easy Docker setup
+
+![Chat Screenshot](screenshot2.png)
 
 ## NEW - Streaming Support
 
