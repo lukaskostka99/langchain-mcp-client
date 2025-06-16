@@ -10,6 +10,7 @@ import json
 import datetime
 import time
 import traceback
+import re
 from typing import Dict, List, Any
 from langchain_core.messages import HumanMessage
 
@@ -26,6 +27,89 @@ from .llm_providers import (
     get_temperature_range, get_default_max_tokens, get_max_tokens_range,
     get_default_timeout, validate_model_parameters, DEFAULT_SYSTEM_PROMPT
 )
+
+
+def parse_reasoning_content(content: str) -> Dict[str, str]:
+    """
+    Parse content to extract thinking and final response.
+    
+    Args:
+        content: The full content string that may contain <think></think> tags
+        
+    Returns:
+        Dict with 'thinking' and 'response' keys
+    """
+    thinking_pattern = r'<think>(.*?)</think>'
+    
+    # Find all thinking sections
+    thinking_matches = re.findall(thinking_pattern, content, re.DOTALL)
+    
+    # Remove all thinking sections to get the final response
+    response_content = re.sub(thinking_pattern, '', content, flags=re.DOTALL).strip()
+    
+    # Combine all thinking sections
+    thinking_content = '\n\n'.join(thinking_matches) if thinking_matches else ''
+    
+    return {
+        'thinking': thinking_content,
+        'response': response_content
+    }
+
+
+def detect_reasoning_in_stream(text_buffer: str, thinking_round: int = 1) -> Dict[str, Any]:
+    """
+    Detect reasoning tags in streaming text and return parsing information.
+    
+    Args:
+        text_buffer: Current accumulated text buffer
+        thinking_round: Which round of thinking we're looking for
+        
+    Returns:
+        Dict with detection status and extracted content
+    """
+    result = {
+        'has_thinking': False,
+        'thinking_complete': False,
+        'thinking_content': '',
+        'response_content': '',
+        'in_thinking': False
+    }
+    
+    # Find all thinking blocks
+    import re
+    thinking_pattern = r'<think>(.*?)</think>'
+    thinking_matches = list(re.finditer(thinking_pattern, text_buffer, re.DOTALL))
+    
+    # Check if we have the thinking round we're looking for
+    if len(thinking_matches) >= thinking_round:
+        # We have a complete thinking block for this round
+        match = thinking_matches[thinking_round - 1]  # 0-indexed
+        result['has_thinking'] = True
+        result['thinking_complete'] = True
+        result['thinking_content'] = match.group(1).strip()
+        result['in_thinking'] = False
+        
+        # Extract response content (everything after the last complete thinking block)
+        last_match = thinking_matches[-1]
+        response_start = last_match.end()
+        result['response_content'] = text_buffer[response_start:].strip()
+        
+    elif '<think>' in text_buffer:
+        # We have an incomplete thinking block
+        # Count complete blocks to see if this is a new round
+        complete_blocks = len(thinking_matches)
+        
+        # Find the last opening tag
+        last_think_start = text_buffer.rfind('<think>')
+        
+        if complete_blocks + 1 == thinking_round:
+            # This is the thinking round we're looking for, but it's incomplete
+            result['has_thinking'] = True
+            result['in_thinking'] = True
+            think_content_start = last_think_start + 7  # Length of '<think>'
+            result['thinking_content'] = text_buffer[think_content_start:].strip()
+    
+    return result
 
 
 def render_chat_tab():
@@ -208,6 +292,12 @@ def render_chat_history():
                     with st.status("🔧 Tool executions for this response", expanded=False, state="complete"):
                         st.code(message['tool'], language="text")
                 
+                # Display thinking content if available
+                if "thinking" in message and message["thinking"]:
+                    with st.expander("🧠 View Model Reasoning", expanded=False):
+                        st.write("**Model's thinking process:**")
+                        st.write(message["thinking"])
+                
                 # Display the main response
                 st.write(message["content"])
                 
@@ -228,6 +318,10 @@ def render_chat_history():
                         else:
                             time_str = f"{response_time:.1f}s"
                         caption_parts.append(f"⌛ {time_str}")
+                    
+                    # Add thinking indicator if thinking content exists
+                    if "thinking" in message and message["thinking"]:
+                        caption_parts.append("🧠 Reasoning available")
                     
                     st.caption(" • ".join(caption_parts))
                 
@@ -314,7 +408,7 @@ def process_user_message(user_input: str):
 
 
 def process_streaming_response(user_input: str):
-    """Process user message with enhanced streaming using st.status and st.write_stream."""
+    """Process user message with enhanced streaming using st.status and st.write_stream with reasoning detection."""
     # Track response timing
     start_time = time.time()
     
@@ -327,129 +421,234 @@ def process_streaming_response(user_input: str):
     # Initialize tracking variables
     current_response = ""
     tool_executions = []
+    thinking_content = ""
+    final_response = ""
     
-    # Create main status container for overall processing
-    with st.status("🤖 Processing your request...", expanded=True) as main_status:
-        try:
-            # Step 1: Initialize agent processing
-            st.write("🧠 **Agent initialized** - Analyzing your request...")
-            
-            # Create async generator processing function
-            async def process_streaming():
-                nonlocal current_response, tool_executions
-                
-                # Track different phases
-                thinking_phase = True
-                tool_phase = False
-                response_phase = False
-                
-                async for event in stream_agent_events(st.session_state.agent, user_input, config):
-                    event_type = event.get("event")
-                    event_name = event.get("name", "")
-                    
-                    # Handle different event types with enhanced status updates
-                    if event_type == "on_chain_start":
-                        if "agent" in event_name.lower():
-                            st.write("🔍 **Agent reasoning** - Planning approach...")
-                            thinking_phase = True
-                    
-                    elif event_type == "on_tool_start":
-                        # Tool execution started
-                        tool_name = event.get("name", "Unknown")
-                        tool_input = event.get("data", {}).get("input", {})
-                        
-                        if thinking_phase:
-                            st.write("✅ **Planning complete** - Ready to execute tools")
-                            thinking_phase = False
-                            tool_phase = True
-                        
-                        # Track tool execution without nested status
-                        st.write(f"🔧 **Starting tool:** {tool_name}")
-                        if tool_input:
-                            st.write(f"   📝 Input: {str(tool_input)[:100]}{'...' if len(str(tool_input)) > 100 else ''}")
-                    
-                    elif event_type == "on_tool_end":
-                        # Tool execution completed
-                        tool_name = event.get("name", "Unknown")
-                        tool_output = event.get("data", {}).get("output", "")
-                        tool_input = event.get("data", {}).get("input", {})
-                        
-                        st.write(f"✅ **Completed tool:** {tool_name}")
-                        
-                        # Store tool execution data
-                        tool_executions.append({
-                            "tool_name": tool_name,
-                            "input": tool_input,
-                            "output": tool_output,
-                            "timestamp": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        })
-                    
-                    elif event_type == "on_chat_model_start":
-                        if tool_phase:
-                            st.write("🎯 **Tool execution complete** - Generating response...")
-                            tool_phase = False
-                            response_phase = True
-                    
-                    elif event_type == "on_chat_model_stream":
-                        # Handle streaming tokens from the chat model
-                        chunk = event.get("data", {}).get("chunk", {})
-                        if hasattr(chunk, 'content') and chunk.content:
-                            current_response += chunk.content
-                    
-                    elif event_type == "on_chat_model_end":
-                        # Model finished generating
-                        final_response = event.get("data", {}).get("output", {})
-                        # If we didn't get content through streaming, use the final response
-                        if not current_response and final_response:
-                            if hasattr(final_response, 'content'):
-                                current_response = final_response.content
-                            elif isinstance(final_response, str):
-                                current_response = final_response
-                
-                return current_response, tool_executions
-            
-            # Process the streaming using run_async
-            result = run_async(process_streaming())
-            if result:
-                final_response, final_tool_executions = result
-                current_response = final_response or current_response
-                tool_executions = final_tool_executions or tool_executions
-            
-            # Update main status to show response generation
-            if current_response:
-                main_status.update(
-                    label="💬 Generating response...",
-                    state="running"
-                )
-                st.write("📝 **Response ready** - Streaming to you now...")
-                
-        except Exception as e:
-            main_status.update(
-                label="❌ Processing failed",
-                state="error"
-            )
-            st.error(f"Streaming failed: {str(e)}")
-            st.info("🔄 Falling back to non-streaming mode...")
-            process_non_streaming_response(user_input)
-            return
+    # Create containers for dynamic updates
+    main_status_container = st.empty()
     
-    # Stream the final response using st.write_stream if we have content
+    try:
+        # Track if response streaming has started
+        response_started = False
+        
+        # Create async generator processing function
+        async def process_streaming():
+            nonlocal current_response, tool_executions, thinking_content, final_response, response_started
+            
+            # Placeholders for streaming content
+            thinking_stream_placeholder = None
+            response_placeholder = None
+            
+            # Track different phases
+            thinking_phase = True
+            tool_phase = False
+            reasoning_complete = False
+            text_buffer = ""
+            thinking_round = 1  # Track which round of thinking we're in
+            all_thinking_content = []  # Accumulate all thinking rounds for chat history
+            
+            # Update main status
+            with main_status_container.container():
+                with st.status("🤖 Processing your request...", expanded=True) as main_status:
+                    main_status.update(label="🧠 **Agent initialized** - Analyzing your request...", state="running")
+                    
+                    async for event in stream_agent_events(st.session_state.agent, user_input, config):
+                        event_type = event.get("event")
+                        event_name = event.get("name", "")
+                        
+                        # Handle different event types with enhanced status updates
+                        if event_type == "on_chain_start":
+                            if "agent" in event_name.lower():
+                                main_status.update(label="🔍 **Agent reasoning** - Planning approach...", state="running")
+                                thinking_phase = True
+                        
+                        elif event_type == "on_tool_start":
+                            # Tool execution started
+                            tool_name = event.get("name", "Unknown")
+                            tool_input = event.get("data", {}).get("input", {})
+                            
+                            if thinking_phase:
+                                main_status.update(label="✅ **Planning complete** - Ready to execute tools", state="complete")
+                                thinking_phase = False
+                                tool_phase = True
+                            
+                            # Track tool execution without nested status
+                            main_status.update(label=f"🔧 **Starting tool:** {tool_name}", state="running")
+                            if tool_input:
+                                st.write(f"🔧 Using tool: {tool_name}")
+                        
+                        elif event_type == "on_tool_end":
+                            # Tool execution completed
+                            tool_name = event.get("name", "Unknown")
+                            tool_output = event.get("data", {}).get("output", "")
+                            tool_input = event.get("data", {}).get("input", {})
+                            
+                            main_status.update(label=f"✅ **Completed tool:** {tool_name}", state="complete")
+                            st.write(f"🔧 Finished using tool: {tool_name}")
+                            
+                            # Store tool execution data
+                            tool_executions.append({
+                                "tool_name": tool_name,
+                                "input": tool_input,
+                                "output": tool_output,
+                                "timestamp": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            })
+                            
+                            # Reset reasoning detection for potential post-tool thinking
+                            reasoning_complete = False
+                            thinking_stream_placeholder = None
+                            thinking_round += 1
+                            # Clear current thinking content for new round (but keep accumulated)
+                            thinking_content = ""
+                        
+                        elif event_type == "on_chat_model_start":
+                            if tool_phase:
+                                main_status.update(label="🎯 **Tool execution complete** - Generating response...", state="running")
+                                tool_phase = False
+                        
+                        elif event_type == "on_chat_model_stream":
+                            # Handle streaming tokens from the chat model
+                            chunk = event.get("data", {}).get("chunk", {})
+                            if hasattr(chunk, 'content') and chunk.content:
+                                # Add to text buffer for reasoning detection
+                                text_buffer += chunk.content
+                                
+                                # Check for reasoning content
+                                reasoning_info = detect_reasoning_in_stream(text_buffer, thinking_round)
+                                
+                                if reasoning_info['has_thinking'] and not reasoning_complete:
+                                    # We're in thinking mode - show thinking content
+                                    current_thinking = reasoning_info['thinking_content']
+                                    
+                                    # Display thinking in status container
+                                    if thinking_stream_placeholder is None:
+                                        if thinking_round == 1:
+                                            main_status.update(label="🧠 **AI is thinking...**", state="running")
+                                        else:
+                                            main_status.update(label=f"🧠 **AI is thinking** (round {thinking_round})...", state="running")
+                                        thinking_stream_placeholder = st.empty()
+                                    
+                                    with thinking_stream_placeholder:
+                                        st.text(f"🧠 {current_thinking}")
+                                    
+                                    # Check if thinking is complete
+                                    if reasoning_info['thinking_complete']:
+                                        thinking_content = reasoning_info['thinking_content']
+                                        current_response = reasoning_info['response_content']
+                                        reasoning_complete = True
+                                        
+                                        # Add this thinking round to accumulated content
+                                        if thinking_round > 1:
+                                            all_thinking_content.append(f"**Round {thinking_round}:**\n{thinking_content}")
+                                        else:
+                                            all_thinking_content.append(thinking_content)
+                                        
+                                        # Show completion of this thinking round
+                                        if thinking_round > 1:
+                                            st.badge(f"**Thinking round {thinking_round} complete!**", icon="✅")
+                                        else:
+                                            st.badge("**Thinking complete!**", icon="✅")
+                                
+                                elif reasoning_complete:
+                                    # Thinking is complete, accumulate and stream response content
+                                    if reasoning_info['response_content'] != current_response:
+                                        current_response = reasoning_info['response_content']
+                                        
+                                        # Start streaming response inside status container
+                                        if not response_started:
+                                            main_status.update(label="💬 **Streaming response...**", state="running")
+                                            response_started = True
+                                            st.divider()  # Add separator after thinking
+                                            st.write("💬 **Final Response:**")
+                                            response_placeholder = st.empty()
+                                        
+                                        # Update response in real-time inside status container
+                                        if response_started:
+                                            response_placeholder.write(current_response)
+                                else:
+                                    # No reasoning detected, accumulate and stream normal response
+                                    current_response += chunk.content
+                                    
+                                    # Start streaming response inside status container
+                                    if not response_started:
+                                        main_status.update(label="💬 **Streaming response...**", state="running")
+                                        response_started = True
+                                        st.write("💬 **Final Response:**")
+                                        response_placeholder = st.empty()
+                                    
+                                    # Update response in real-time inside status container
+                                    if response_started:
+                                        response_placeholder.write(current_response)
+                        
+                        elif event_type == "on_chat_model_end":
+                            # Model finished generating
+                            final_response_event = event.get("data", {}).get("output", {})
+                            
+                            # If we didn't get content through streaming, use the final response
+                            if not current_response and final_response_event:
+                                if hasattr(final_response_event, 'content'):
+                                    full_content = final_response_event.content
+                                elif isinstance(final_response_event, str):
+                                    full_content = final_response_event
+                                else:
+                                    full_content = str(final_response_event)
+                                
+                                # Parse the full content for reasoning
+                                parsed_content = parse_reasoning_content(full_content)
+                                
+                                if parsed_content['thinking']:
+                                    thinking_content = parsed_content['thinking']
+                                    current_response = parsed_content['response']
+                                    
+                                    # Show thinking if we haven't already
+                                    if not reasoning_complete:
+                                        st.write("🧠 **Model reasoning detected**")
+                                        
+                                        # Display thinking content inside the current status container
+                                        st.text(f"🧠 {thinking_content}")
+                                        
+                                        # Add to accumulated thinking content
+                                        all_thinking_content.append(thinking_content)
+                                        
+                                        reasoning_complete = True
+                                else:
+                                    current_response = full_content
+                    
+                    # Update main status when processing is complete
+                    if current_response:
+                        main_status.update(
+                            label="✅ Response complete",
+                            state="complete"
+                        )
+                        main_status.update(label="📝 **Processing complete** - Streaming response...", state="complete")
+            
+            return current_response, tool_executions, all_thinking_content
+        
+        # Process the streaming using run_async
+        result = run_async(process_streaming())
+        if result:
+            final_response, final_tool_executions, final_thinking_list = result
+            current_response = final_response or current_response
+            tool_executions = final_tool_executions or tool_executions
+            # Combine all thinking rounds into a single string for chat history
+            thinking_content = "\n\n".join(final_thinking_list) if final_thinking_list else ""
+            
+    except Exception as e:
+        # Update main status to show error
+        with main_status_container.container():
+            with st.status("❌ Processing failed", expanded=True, state="error"):
+                st.error(f"Streaming failed: {str(e)}")
+                st.info("🔄 Falling back to non-streaming mode...")
+        
+        process_non_streaming_response(user_input)
+        return
+    
+    # Store the response in chat history regardless of streaming status
     if current_response:
-        # Create a generator for streaming the response
-        def response_generator():
-            words = current_response.split()
-            for i, word in enumerate(words):
-                if i == 0:
-                    yield word
-                else:
-                    yield " " + word
-                # Add small delay for better visual effect
-                time.sleep(0.02)
+        # Response is already displayed inside the status container
+        # No need for external display
         
-        # Use st.write_stream for the typewriter effect
-        streamed_response = st.write_stream(response_generator())
-        
-        # Store the response in chat history with timing and model info
+        # Always store the response in chat history with timing and model info
         end_time = time.time()
         response_time = end_time - start_time
         current_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -469,6 +668,11 @@ def process_streaming_response(user_input: str):
             "model_name": model_name,
             "response_time": response_time
         }
+        
+        # Add thinking content if available
+        if thinking_content:
+            assistant_message["thinking"] = thinking_content
+        
         st.session_state.chat_history.append(assistant_message)
     
     # Handle tool executions summary
@@ -494,114 +698,162 @@ def process_streaming_response(user_input: str):
             if 'tool_executions' not in st.session_state:
                 st.session_state.tool_executions = []
             st.session_state.tool_executions.extend(new_executions)
-            
-            # Show execution summary with enhanced status
-            with st.status(f"📊 Tool Execution Summary", expanded=False, state="complete"):
-                st.write(f"**Executed {len(new_executions)} tool(s) successfully:**")
-                for execution in new_executions:
-                    st.write(f"• **{execution['tool_name']}** at {execution['timestamp']}")
     
     st.rerun()
 
 
 def process_non_streaming_response(user_input: str):
-    """Process user message with non-streaming response (original implementation)."""
+    """Process user message with non-streaming response (original implementation) with reasoning detection."""
     # Track response timing
     start_time = time.time()
     
-    with st.spinner("Thinking..."):
-        try:
-            # Prepare agent invocation config
-            config = prepare_agent_invocation_config(
-                memory_enabled=st.session_state.get('memory_enabled', False),
-                thread_id=st.session_state.get('thread_id', 'default')
-            )
-            
-            # Run the agent with context isolation and shorter timeout
-            if config:
-                # For memory-enabled agents, use safe async call with reasonable timeout
-                response = safe_async_call(
-                    st.session_state.agent.ainvoke({"messages": [HumanMessage(user_input)]}, config),
-                    "Failed to process message with memory",
-                    timeout=600.0  # 10 minutes timeout for chat responses
-                )
-            else:
-                # For agents without memory, use safe async call with shorter timeout
-                response = safe_async_call(
-                    run_agent(st.session_state.agent, user_input),
-                    "Failed to process message",
-                    timeout=600.0  # 10 minutes timeout for simple chat
-                )
-            
-            if response is None:
-                st.error("❌ Failed to get response from agent. Please try again.")
-                st.info("💡 If this persists, try refreshing the page or reconnecting to the MCP server.")
-                return
-            
-            # Process response
-            tool_executions = extract_tool_executions_from_response(response)
-            assistant_response = extract_assistant_response(response)
-            
-            if assistant_response:
-                st.write(assistant_response)
-                # Add to chat history with metadata, timing, and model info
-                end_time = time.time()
-                response_time = end_time - start_time
-                current_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                message_count = len(st.session_state.chat_history) + 1
-                message_id = f"msg_{message_count:04d}"
+    # Initialize tracking variables
+    current_response = ""
+    tool_executions = []
+    thinking_content = ""
+    
+    # Create containers for dynamic updates
+    main_status_container = st.empty()
+    
+    try:
+        # Prepare agent invocation config
+        config = prepare_agent_invocation_config(
+            memory_enabled=st.session_state.get('memory_enabled', False),
+            thread_id=st.session_state.get('thread_id', 'default')
+        )
+        
+        # Update main status
+        with main_status_container.container():
+            with st.status("🤖 Processing your request...", expanded=True) as main_status:
+                st.write("🧠 **Agent initialized** - Analyzing your request...")
                 
-                # Get model information
-                model_provider = st.session_state.get('llm_provider', 'Unknown')
-                model_name = st.session_state.get('selected_model', 'Unknown')
+                # Run the agent with context isolation and shorter timeout
+                if config:
+                    # For memory-enabled agents, use safe async call with reasonable timeout
+                    response = safe_async_call(
+                        st.session_state.agent.ainvoke({"messages": [HumanMessage(user_input)]}, config),
+                        "Failed to process message with memory",
+                        timeout=600.0  # 10 minutes timeout for chat responses
+                    )
+                else:
+                    # For agents without memory, use safe async call with shorter timeout
+                    response = safe_async_call(
+                        run_agent(st.session_state.agent, user_input),
+                        "Failed to process message",
+                        timeout=600.0  # 10 minutes timeout for simple chat
+                    )
                 
-                assistant_message = {
-                    "role": "assistant", 
-                    "content": assistant_response,
-                    "timestamp": current_time,
-                    "message_id": message_id,
-                    "model_provider": model_provider,
-                    "model_name": model_name,
-                    "response_time": response_time
-                }
-                st.session_state.chat_history.append(assistant_message)
-            else:
-                st.warning("No response content found.")
-            
-            # Store tool executions in session state for the test tools tab
-            if tool_executions:
-                # Associate tool executions with the last assistant message
-                if st.session_state.chat_history and st.session_state.chat_history[-1]["role"] == "assistant":
-                    st.session_state.chat_history[-1]["tool_executions"] = tool_executions
+                if response is None:
+                    main_status.update(label="❌ Processing failed", state="error")
+                    st.error("Failed to get response from agent. Please try again.")
+                    return
                 
-                # Also add to global tool executions for the test tools tab
-                existing_executions = st.session_state.get('tool_executions', [])
-                new_executions = []
+                st.write("🔍 **Agent reasoning** - Processing your request...")
                 
-                for execution in tool_executions:
-                    # Check if this execution already exists (by timestamp and tool name)
-                    if not any(
-                        ex['timestamp'] == execution['timestamp'] and 
-                        ex['tool_name'] == execution['tool_name']
-                        for ex in existing_executions
-                    ):
-                        new_executions.append(execution)
+                # Process response
+                tool_executions = extract_tool_executions_from_response(response)
+                assistant_response = extract_assistant_response(response)
                 
-                if new_executions:
-                    if 'tool_executions' not in st.session_state:
-                        st.session_state.tool_executions = []
-                    st.session_state.tool_executions.extend(new_executions)
+                # Handle tool executions if any
+                if tool_executions:
+                    st.write("🔧 **Tool executions detected**")
+                    for execution in tool_executions:
+                        st.write(f"✅ **Completed tool:** {execution['tool_name']}")
+                
+                if assistant_response:
+                    # Parse the response for reasoning content
+                    parsed_content = parse_reasoning_content(assistant_response)
                     
-                    # Show execution summary with enhanced status (consistent with streaming)
-                    with st.status(f"📊 Tool Execution Summary", expanded=False, state="complete"):
-                        st.write(f"**Executed {len(new_executions)} tool(s) successfully:**")
-                        for execution in new_executions:
-                            st.write(f"• **{execution['tool_name']}** at {execution['timestamp']}")
+                    # Display thinking if present inside status container
+                    if parsed_content['thinking']:
+                        st.write("🧠 **AI is thinking...**")
+                        st.text(f"💭 {parsed_content['thinking']}")
+                        thinking_content = parsed_content['thinking']
+                    
+                    # Set the final response
+                    current_response = parsed_content['response'] if parsed_content['response'] else assistant_response
+                    
+                    # Display response inside status container
+                    if thinking_content:
+                        st.divider()  # Add separator after thinking
+                    st.write("💬 **Final Response:**")
+                    st.write(current_response)
+                    
+                    # Update main status when processing is complete
+                    main_status.update(
+                        label="✅ Response complete",
+                        state="complete"
+                    )
+                else:
+                    main_status.update(label="⚠️ No response content", state="error")
+                    st.warning("No response content found.")
+                    return
+            
+            # Add to chat history with metadata, timing, and model info
+            end_time = time.time()
+            response_time = end_time - start_time
+            current_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            message_count = len(st.session_state.chat_history) + 1
+            message_id = f"msg_{message_count:04d}"
+            
+            # Get model information
+            model_provider = st.session_state.get('llm_provider', 'Unknown')
+            model_name = st.session_state.get('selected_model', 'Unknown')
+            
+            assistant_message = {
+                "role": "assistant", 
+                "content": current_response,
+                "timestamp": current_time,
+                "message_id": message_id,
+                "model_provider": model_provider,
+                "model_name": model_name,
+                "response_time": response_time
+            }
+            
+            # Add thinking content if available
+            if thinking_content:
+                assistant_message["thinking"] = thinking_content
+            
+            st.session_state.chat_history.append(assistant_message)
+        
+        # Handle tool executions summary (consistent with streaming)
+        if tool_executions:
+            # Associate tool executions with the last assistant message
+            if st.session_state.chat_history and st.session_state.chat_history[-1]["role"] == "assistant":
+                st.session_state.chat_history[-1]["tool_executions"] = tool_executions
+            
+            # Also add to global tool executions for the test tools tab
+            existing_executions = st.session_state.get('tool_executions', [])
+            new_executions = []
+            
+            for execution in tool_executions:
+                # Check if this execution already exists (by timestamp and tool name)
+                if not any(
+                    ex['timestamp'] == execution['timestamp'] and 
+                    ex['tool_name'] == execution['tool_name']
+                    for ex in existing_executions
+                ):
+                    new_executions.append(execution)
+            
+            if new_executions:
+                if 'tool_executions' not in st.session_state:
+                    st.session_state.tool_executions = []
+                st.session_state.tool_executions.extend(new_executions)
                 
-        except Exception as e:
-            error_msg = format_error_message(e)
-            st.error(f"❌ Error processing message: {error_msg}")
-            st.code(traceback.format_exc(), language="python")
+                # Show execution summary with enhanced status (consistent with streaming)
+                with st.status(f"📊 Tool Execution Summary", expanded=False, state="complete"):
+                    st.write(f"**Executed {len(new_executions)} tool(s) successfully:**")
+                    for execution in new_executions:
+                        st.write(f"• **{execution['tool_name']}** at {execution['timestamp']}")
+                
+    except Exception as e:
+        # Update main status to show error
+        with main_status_container.container():
+            with st.status("❌ Processing failed", expanded=True, state="error"):
+                st.error(f"Non-streaming processing failed: {str(e)}")
+                st.code(traceback.format_exc(), language="python")
+    
+    st.rerun()
 
 
 def handle_auto_save(assistant_response: str):
@@ -1534,12 +1786,19 @@ def render_memory_statistics():
     
     with col1:
         st.metric("User Messages", stats['user_messages'])
-    with col2:
         st.metric("Assistant Messages", stats['assistant_messages'])
-    with col3:
+    with col2:
         st.metric("Tool Executions", stats['tool_executions'])
+        st.metric("Messages with Reasoning", stats['messages_with_reasoning'])
+    with col3:
+        st.metric("Est. Content Tokens", f"{stats['estimated_tokens']:,}")
+        st.metric("Est. Thinking Tokens", f"{stats['estimated_thinking_tokens']:,}")
     with col4:
-        st.metric("Est. Tokens", f"{stats['estimated_tokens']:,}")
+        st.metric("Total Words", f"{stats['total_words']:,}")
+        if stats['assistant_messages'] > 0:
+            st.metric("Reasoning %", f"{stats['reasoning_percentage']:.1f}%")
+        else:
+            st.metric("Reasoning %", "0%")
 
 
 def render_memory_tips():

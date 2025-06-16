@@ -133,10 +133,9 @@ def render_ollama_configuration() -> Dict:
         available_models = st.session_state.get('ollama_models', [])
         
         if available_models:
-            # Show available models            
-            st.write("**Available Models:**")
             model_count = len(st.session_state.get('ollama_models', []))
-            st.badge(f"{model_count} models available", icon="ℹ️", color="blue")
+            # Show available models            
+            st.write(f"**Available Models:** :blue-badge[{model_count} models available]")
             model_name = st.selectbox(
                 "Select Model",
                 options=available_models,

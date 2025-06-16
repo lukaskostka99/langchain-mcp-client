@@ -6,7 +6,7 @@ and memory functionality within the agent system.
 """
 
 import datetime
-from typing import Optional
+from typing import Optional, List, Dict
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool
 import streamlit as st
@@ -418,153 +418,110 @@ def create_history_tool() -> ConversationHistoryTool:
     return ConversationHistoryTool()
 
 
-def format_chat_history_for_export(chat_history: list) -> dict:
+def format_chat_history_for_export(chat_history: List[Dict]) -> Dict:
     """
-    Format chat history for export with proper serialization of complex objects.
+    Format chat history for export with comprehensive metadata.
     
     Args:
-        chat_history: List of chat messages
-    
+        chat_history: List of message dictionaries
+        
     Returns:
-        Formatted dictionary ready for export
+        Formatted export data with enhanced structure
     """
-    import datetime
-    
-    def serialize_message(msg):
-        """Serialize a single message, handling complex objects."""
-        serialized = {}
-        
-        # Copy basic fields
-        for key, value in msg.items():
-            if key in ['role', 'content', 'timestamp', 'message_id']:
-                serialized[key] = value
-            elif key == 'tool_executions':
-                # Serialize tool executions
-                if value:
-                    serialized[key] = []
-                    for exec_info in value:
-                        serialized_exec = {}
-                        for exec_key, exec_value in exec_info.items():
-                            # Handle complex objects in tool executions
-                            if hasattr(exec_value, '__class__') and 'langchain' in str(exec_value.__class__):
-                                if hasattr(exec_value, 'content'):
-                                    serialized_exec[exec_key] = {
-                                        'type': exec_value.__class__.__name__,
-                                        'content': str(exec_value.content)
-                                    }
-                                else:
-                                    serialized_exec[exec_key] = {
-                                        'type': exec_value.__class__.__name__,
-                                        'content': str(exec_value)
-                                    }
-                            else:
-                                serialized_exec[exec_key] = exec_value
-                        serialized[key].append(serialized_exec)
-            else:
-                # Handle other complex objects
-                if hasattr(value, '__class__') and 'langchain' in str(value.__class__):
-                    if hasattr(value, 'content'):
-                        serialized[key] = {
-                            'type': value.__class__.__name__,
-                            'content': str(value.content)
-                        }
-                    else:
-                        serialized[key] = {
-                            'type': value.__class__.__name__,
-                            'content': str(value)
-                        }
-                elif isinstance(value, (datetime.datetime, datetime.date)):
-                    serialized[key] = value.isoformat()
-                elif isinstance(value, set):
-                    serialized[key] = list(value)
-                elif isinstance(value, bytes):
-                    try:
-                        serialized[key] = value.decode('utf-8')
-                    except UnicodeDecodeError:
-                        serialized[key] = f"<bytes: {len(value)} bytes>"
-                else:
-                    # For other types, try to serialize directly or convert to string
-                    try:
-                        import json
-                        json.dumps(value)  # Test if it's JSON serializable
-                        serialized[key] = value
-                    except (TypeError, ValueError):
-                        serialized[key] = str(value)
-        
-        return serialized
-    
-    # Serialize all messages
-    serialized_messages = []
-    for msg in chat_history:
-        try:
-            serialized_msg = serialize_message(msg)
-            serialized_messages.append(serialized_msg)
-        except Exception as e:
-            # If serialization fails, create a fallback message
-            fallback_msg = {
-                'role': msg.get('role', 'unknown'),
-                'content': str(msg.get('content', '')),
-                'timestamp': msg.get('timestamp', datetime.datetime.now().isoformat()),
-                'message_id': msg.get('message_id', f'msg_{len(serialized_messages)+1}'),
-                'serialization_error': f'Failed to serialize: {str(e)}'
-            }
-            serialized_messages.append(fallback_msg)
-    
-    return {
+    export_data = {
+        'format_version': '3.1',  # Increment version to include thinking content
         'export_timestamp': datetime.datetime.now().isoformat(),
-        'message_count': len(serialized_messages),
-        'messages': serialized_messages,
-        'format_version': '3.0'  # Clean implementation without legacy support
+        'total_messages': len(chat_history),
+        'messages': [],
+        'statistics': calculate_chat_statistics(chat_history)
     }
+    
+    for message in chat_history:
+        formatted_message = {
+            'role': message.get('role', 'unknown'),
+            'content': message.get('content', ''),
+            'timestamp': message.get('timestamp', ''),
+            'message_id': message.get('message_id', ''),
+            'word_count': len(message.get('content', '').split())
+        }
+        
+        # Add model information for assistant messages
+        if message.get('role') == 'assistant':
+            if 'model_provider' in message:
+                formatted_message['model_provider'] = message['model_provider']
+            if 'model_name' in message:
+                formatted_message['model_name'] = message['model_name']
+            if 'response_time' in message:
+                formatted_message['response_time'] = message['response_time']
+            
+            # Add thinking content if available
+            if 'thinking' in message and message['thinking']:
+                formatted_message['thinking'] = message['thinking']
+                formatted_message['has_reasoning'] = True
+                formatted_message['thinking_word_count'] = len(message['thinking'].split())
+            else:
+                formatted_message['has_reasoning'] = False
+        
+        # Add tool execution information if available
+        if 'tool_executions' in message and message['tool_executions']:
+            formatted_message['tool_executions'] = message['tool_executions']
+            formatted_message['tool_count'] = len(message['tool_executions'])
+        else:
+            formatted_message['tool_count'] = 0
+        
+        export_data['messages'].append(formatted_message)
+    
+    return export_data
 
 
 def calculate_chat_statistics(chat_history: list) -> dict:
     """
-    Calculate statistics from chat history with enhanced message format.
+    Calculate comprehensive statistics about the chat history.
     
     Args:
         chat_history: List of chat messages
-    
+        
     Returns:
-        Dictionary with statistics
+        Dictionary containing various statistics
     """
-    if not chat_history:
-        return {
-            'total_messages': 0,
-            'user_messages': 0,
-            'assistant_messages': 0,
-            'tool_executions': 0,
-            'estimated_tokens': 0
-        }
+    total_messages = len(chat_history)
+    user_messages = len([msg for msg in chat_history if msg.get('role') == 'user'])
+    assistant_messages = len([msg for msg in chat_history if msg.get('role') == 'assistant'])
     
-    user_msgs = len([m for m in chat_history if m.get("role") == "user"])
-    assistant_msgs = len([m for m in chat_history if m.get("role") == "assistant"])
-    
-    # Count tool executions from enhanced format
+    # Count tool executions across all messages
     tool_executions = 0
     for msg in chat_history:
-        if msg.get("role") == "assistant" and msg.get("tool_executions"):
-            tool_executions += len(msg.get("tool_executions", []))
+        if 'tool_executions' in msg and msg['tool_executions']:
+            tool_executions += len(msg['tool_executions'])
     
-    # Token estimation including tool execution content
-    total_chars = 0
+    # Estimate token count (rough approximation: 1 token ≈ 0.75 words)
+    total_words = 0
+    thinking_words = 0
+    messages_with_reasoning = 0
+    
     for msg in chat_history:
-        # Count content characters
-        total_chars += len(str(msg.get("content", "")))
+        content = msg.get('content', '')
+        if content:
+            total_words += len(content.split())
         
-        # Count tool execution characters
-        if msg.get("tool_executions"):
-            for exec_info in msg.get("tool_executions", []):
-                total_chars += len(str(exec_info.get("input", "")))
-                total_chars += len(str(exec_info.get("output", "")))
+        # Count thinking words and messages with reasoning
+        if msg.get('role') == 'assistant' and 'thinking' in msg and msg['thinking']:
+            thinking_content = msg['thinking']
+            thinking_words += len(thinking_content.split())
+            messages_with_reasoning += 1
     
-    estimated_tokens = total_chars // 4
+    estimated_tokens = int(total_words * 1.33)  # Slightly higher ratio for more accurate estimate
+    estimated_thinking_tokens = int(thinking_words * 1.33)
     
     return {
-        'total_messages': len(chat_history),
-        'user_messages': user_msgs,
-        'assistant_messages': assistant_msgs,
+        'total_messages': total_messages,
+        'user_messages': user_messages,
+        'assistant_messages': assistant_messages,
         'tool_executions': tool_executions,
+        'total_words': total_words,
+        'thinking_words': thinking_words,
+        'messages_with_reasoning': messages_with_reasoning,
         'estimated_tokens': estimated_tokens,
-        'avg_message_length': total_chars / len(chat_history) if chat_history else 0
+        'estimated_thinking_tokens': estimated_thinking_tokens,
+        'reasoning_percentage': (messages_with_reasoning / assistant_messages * 100) if assistant_messages > 0 else 0
     } 
