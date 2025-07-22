@@ -38,3 +38,6 @@ var/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Database
+conversations.db
