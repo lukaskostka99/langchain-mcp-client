@@ -98,7 +98,7 @@ def create_agent_with_tools(
     if memory_enabled:
         if memory_type == "Persistent (Cross-session)" and persistent_storage:
             # Use SQLite checkpointer for persistent storage
-            checkpointer = persistent_storage.get_checkpointer()
+            checkpointer = persistent_storage.get_checkpointer_sync()
         else:
             # Use in-memory checkpointer for short-term storage
             checkpointer = InMemorySaver()

@@ -8,18 +8,20 @@ and provides interfaces for managing conversation metadata.
 import sqlite3
 import threading
 import datetime
+import json
 from pathlib import Path
-from typing import Dict, List
-from contextlib import ExitStack
+from typing import Dict, List, Optional
 
 import streamlit as st
-import aiosqlite
 from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 
 
 class PersistentStorageManager:
-    """Manages SQLite database for persistent conversation storage."""
+    """
+    Manages SQLite database for persistent conversation storage.
+    Uses a simple manual save/load approach to avoid async context issues.
+    """
     
     def __init__(self, db_path: str = "conversations.db"):
         self.db_path = Path(db_path)
@@ -44,52 +46,157 @@ class PersistentStorageManager:
                     )
                 """)
                 
+                # Create conversation messages table for manual persistence
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS conversation_messages (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        thread_id TEXT NOT NULL,
+                        role TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        timestamp TEXT NOT NULL,
+                        message_id TEXT,
+                        metadata TEXT,
+                        FOREIGN KEY (thread_id) REFERENCES conversation_metadata (thread_id)
+                    )
+                """)
+                
+                # Create index for better performance
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_conversation_messages_thread_id 
+                    ON conversation_messages (thread_id)
+                """)
+                
                 conn.commit()
         except Exception as e:
             st.error(f"Error initializing database: {str(e)}")
     
-    def get_checkpointer(self):
-        """Get a SQLite checkpointer using context manager pattern."""
-        try:
-            # Use ExitStack to manage the context manager manually
-            if not hasattr(self, '_stack'):
-                self._stack = ExitStack()
-            
-            # Enter the context manager and keep it open
-            checkpointer = self._stack.enter_context(
-                AsyncSqliteSaver.from_conn_string(str(self.db_path))
-            )
-            
-            return checkpointer
-        except Exception as e:
-            st.error(f"Error creating SQLite checkpointer: {str(e)}")
-            # Fallback to in-memory if SQLite fails
-            return InMemorySaver()
+    def get_checkpointer_sync(self):
+        """
+        Return an InMemorySaver to avoid async context issues.
+        We'll handle persistence manually.
+        """
+        return InMemorySaver()
     
-    def close_checkpointer(self):
-        """Close the checkpointer context."""
+    def save_conversation_messages(self, thread_id: str, chat_history: List[Dict]):
+        """
+        Save conversation messages to SQLite database.
+        This replaces the complex LangGraph checkpointer approach.
+        """
         try:
-            if hasattr(self, '_stack'):
-                self._stack.close()
-                delattr(self, '_stack')
+            with self.lock:
+                with sqlite3.connect(self.db_path) as conn:
+                    cursor = conn.cursor()
+                    
+                    # Clear existing messages for this thread
+                    cursor.execute("DELETE FROM conversation_messages WHERE thread_id = ?", (thread_id,))
+                    
+                    # Insert all messages
+                    for msg in chat_history:
+                        metadata_json = json.dumps({
+                            'model_provider': msg.get('model_provider'),
+                            'model_name': msg.get('model_name'),
+                            'response_time': msg.get('response_time'),
+                            'thinking': msg.get('thinking'),
+                            'tool_executions': msg.get('tool_executions')
+                        })
+                        
+                        cursor.execute("""
+                            INSERT INTO conversation_messages 
+                            (thread_id, role, content, timestamp, message_id, metadata)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        """, (
+                            thread_id,
+                            msg.get('role', ''),
+                            msg.get('content', ''),
+                            msg.get('timestamp', ''),
+                            msg.get('message_id', ''),
+                            metadata_json
+                        ))
+                    
+                    conn.commit()
+                    
+                    # Update metadata
+                    self.update_conversation_metadata(
+                        thread_id=thread_id,
+                        title=self._generate_title(chat_history),
+                        message_count=len(chat_history),
+                        last_message=self._get_last_message(chat_history)
+                    )
+                    
         except Exception as e:
-            st.warning(f"Error closing checkpointer: {str(e)}")
+            # Don't show error to user for auto-save failures
+            pass
     
-    async def get_async_checkpointer(self):
-        """Get an async SQLite checkpointer."""
+    def load_conversation_messages(self, thread_id: str, limit: int = 100) -> List[Dict]:
+        """
+        Load conversation messages from SQLite database.
+        """
         try:
-            # Create an async SQLite connection
-            conn = await aiosqlite.connect(str(self.db_path))
-            checkpointer = AsyncSqliteSaver(conn)
-            return checkpointer
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT role, content, timestamp, message_id, metadata
+                    FROM conversation_messages
+                    WHERE thread_id = ?
+                    ORDER BY id ASC
+                    LIMIT ?
+                """, (thread_id, limit))
+                
+                messages = []
+                for row in cursor.fetchall():
+                    # Parse metadata
+                    metadata = {}
+                    try:
+                        if row['metadata']:
+                            metadata = json.loads(row['metadata'])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                    
+                    # Create message dict
+                    msg = {
+                        'role': row['role'],
+                        'content': row['content'],
+                        'timestamp': row['timestamp'],
+                        'message_id': row['message_id']
+                    }
+                    
+                    # Add metadata fields if they exist
+                    for key in ['model_provider', 'model_name', 'response_time', 'thinking', 'tool_executions']:
+                        if key in metadata and metadata[key]:
+                            msg[key] = metadata[key]
+                    
+                    messages.append(msg)
+                
+                return messages
+                
         except Exception as e:
-            st.error(f"Error creating async SQLite checkpointer: {str(e)}")
-            # Fallback to in-memory if SQLite fails
-            return InMemorySaver()
+            st.warning(f"Could not load conversation messages: {str(e)}")
+            return []
     
-    def get_checkpointer_context_manager(self):
-        """Get a SQLite checkpointer context manager for the given thread."""
-        return AsyncSqliteSaver.from_conn_string(str(self.db_path))
+    def _generate_title(self, chat_history: List[Dict]) -> str:
+        """Generate a title from the first user message."""
+        for msg in chat_history[:3]:
+            if msg.get('role') == 'user':
+                content = msg.get('content', '')
+                return content[:50] + "..." if len(content) > 50 else content
+        return "Untitled Conversation"
+    
+    def _get_last_message(self, chat_history: List[Dict]) -> str:
+        """Get the last message content for metadata."""
+        if chat_history:
+            last_msg = chat_history[-1].get('content', '')
+            return last_msg[:100] + "..." if len(last_msg) > 100 else last_msg
+        return ""
+    
+    def save_conversation_sync(self, thread_id: str, chat_history: List[Dict]):
+        """
+        Synchronously save conversation after agent response.
+        This is the main method called after each interaction.
+        """
+        if chat_history:
+            self.save_conversation_messages(thread_id, chat_history)
     
     def list_conversations(self) -> List[Dict]:
         """List all stored conversations."""
@@ -138,11 +245,11 @@ class PersistentStorageManager:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 
+                # Delete messages first
+                cursor.execute("DELETE FROM conversation_messages WHERE thread_id = ?", (thread_id,))
+                
                 # Delete metadata
                 cursor.execute("DELETE FROM conversation_metadata WHERE thread_id = ?", (thread_id,))
-                
-                # Note: LangGraph's SQLite checkpointer handles its own tables
-                # We only delete our metadata here
                 
                 conn.commit()
                 return True
@@ -163,13 +270,15 @@ class PersistentStorageManager:
                 if row:
                     metadata = dict(row)
             
-            # Get checkpoints (this would require access to LangGraph's internal tables)
-            # For now, we'll return the metadata and note that checkpoint data is handled by LangGraph
+            # Get messages
+            messages = self.load_conversation_messages(thread_id, limit=1000)
+            
             return {
                 'thread_id': thread_id,
                 'metadata': metadata,
+                'messages': messages,
                 'export_timestamp': datetime.datetime.now().isoformat(),
-                'note': 'Checkpoint data is managed by LangGraph SQLite checkpointer'
+                'format_version': '1.1'
             }
         except Exception as e:
             st.error(f"Error exporting conversation: {str(e)}")

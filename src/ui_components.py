@@ -284,8 +284,7 @@ def render_memory_configuration() -> Dict:
             "Memory Type",
             options=["Short-term (Session)", "Persistent (Cross-session)"],
             index=0 if st.session_state.get('memory_type', 'Short-term (Session)') == 'Short-term (Session)' else 1,
-            help="Short-term: Remembers within current session\nPersistent: Remembers across sessions. DISABLED GIVEN PROBLEMS WITH PERSISTENT STORAGE",
-            disabled=True
+            help="Short-term: Remembers within current session\nPersistent: Remembers across sessions using SQLite database",
         )
         st.session_state.memory_type = memory_type
         memory_config["type"] = memory_type
@@ -360,6 +359,14 @@ def render_conversation_browser():
                     if st.button("📂 Load", key=f"load_{conv['thread_id']}"):
                         st.session_state.thread_id = conv['thread_id']
                         st.session_state.chat_history = []
+                        # Load conversation messages from database
+                        if hasattr(st.session_state, 'persistent_storage'):
+                            try:
+                                loaded_messages = st.session_state.persistent_storage.load_conversation_messages(conv['thread_id'])
+                                if loaded_messages:
+                                    st.session_state.chat_history = loaded_messages
+                            except Exception as e:
+                                st.warning(f"Could not load conversation history: {str(e)}")
                         st.success(f"Loaded conversation: {conv['thread_id']}")
                         st.rerun()
                 

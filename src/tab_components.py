@@ -674,6 +674,9 @@ def process_streaming_response(user_input: str):
             assistant_message["thinking"] = thinking_content
         
         st.session_state.chat_history.append(assistant_message)
+        
+        # Auto-save conversation if persistent storage is enabled
+        handle_auto_save(current_response)
     
     # Handle tool executions summary
     if tool_executions:
@@ -815,6 +818,9 @@ def process_non_streaming_response(user_input: str):
                 assistant_message["thinking"] = thinking_content
             
             st.session_state.chat_history.append(assistant_message)
+            
+            # Auto-save conversation if persistent storage is enabled
+            handle_auto_save(current_response)
         
         # Handle tool executions summary (consistent with streaming)
         if tool_executions:
@@ -864,22 +870,14 @@ def handle_auto_save(assistant_response: str):
         
         try:
             thread_id = st.session_state.get('thread_id', 'default')
-            # Generate title from first user message if not already set
-            title = None
-            for msg in st.session_state.chat_history[:3]:
-                if msg.get('role') == 'user':
-                    content = msg.get('content', '')
-                    title = content[:50] + "..." if len(content) > 50 else content
-                    break
-            
-            st.session_state.persistent_storage.update_conversation_metadata(
+            # Use the new synchronous save method for better performance
+            st.session_state.persistent_storage.save_conversation_sync(
                 thread_id=thread_id,
-                title=title,
-                message_count=len(st.session_state.chat_history),
-                last_message=assistant_response[:100] + "..." if len(assistant_response) > 100 else assistant_response
+                chat_history=st.session_state.chat_history
             )
         except Exception as e:
-            st.warning(f"Auto-save failed: {str(e)}")
+            # Don't show error to user for auto-save failures, but log it
+            pass
 
 
 def apply_message_trimming():
@@ -1415,7 +1413,20 @@ def render_memory_toggle_and_type():
         if new_thread_id != st.session_state.get('thread_id', 'default'):
             st.session_state.thread_id = new_thread_id
             st.session_state.chat_history = []
-            st.info(f"Switched to thread: {new_thread_id}")
+            # Load conversation messages if persistent storage is enabled
+            if (st.session_state.get('memory_type') == "Persistent (Cross-session)" and
+                hasattr(st.session_state, 'persistent_storage')):
+                try:
+                    loaded_messages = st.session_state.persistent_storage.load_conversation_messages(new_thread_id)
+                    if loaded_messages:
+                        st.session_state.chat_history = loaded_messages
+                        st.info(f"Loaded {len(loaded_messages)} messages for thread: {new_thread_id}")
+                    else:
+                        st.info(f"Started new thread: {new_thread_id}")
+                except Exception as e:
+                    st.warning(f"Could not load conversation history: {str(e)}")
+            else:
+                st.info(f"Switched to thread: {new_thread_id}")
             st.rerun()
 
 
@@ -1532,6 +1543,14 @@ def render_conversation_details(conv, index):
         if st.button("📂 Load", key=f"load_detailed_{index}"):
             st.session_state.thread_id = conv['thread_id']
             st.session_state.chat_history = []
+            # Load conversation messages from database
+            if hasattr(st.session_state, 'persistent_storage'):
+                try:
+                    loaded_messages = st.session_state.persistent_storage.load_conversation_messages(conv['thread_id'])
+                    if loaded_messages:
+                        st.session_state.chat_history = loaded_messages
+                except Exception as e:
+                    st.warning(f"Could not load conversation history: {str(e)}")
             st.success(f"Loaded: {conv['thread_id']}")
             st.rerun()
         
