@@ -205,8 +205,10 @@ def create_llm_model(
         "model": model_name,
     }
     
-    # Handle temperature parameter (reasoning models don't support it)
-    if not is_reasoning_model:
+    # Handle temperature parameter (reasoning models only support default temperature of 1.0)
+    if is_reasoning_model:
+        common_params["temperature"] = 1.0
+    else:
         common_params["temperature"] = temperature
     
     # Add streaming if supported 
@@ -340,15 +342,12 @@ def validate_model_parameters(
         if model_name in ["o1", "o1-mini", "o1-preview"] or "o1-" in model_name.lower():
             return False, f"o1 series models ({model_name}) are not supported due to unique API requirements. Please use o3-mini, o4-mini, or regular GPT models instead."
     
-    # Validate temperature (reasoning models don't support it)
+    # Validate temperature for non-reasoning models
     if not is_reasoning:
         temp_min, temp_max = config["temperature_range"]
         if not (temp_min <= temperature <= temp_max):
             return False, f"Temperature must be between {temp_min} and {temp_max} for {provider}"
-    else:
-        # Reasoning models don't support temperature
-        if temperature != 0.7:  # Only warn if user explicitly set a different temperature
-            return False, f"Temperature is not supported for reasoning model {model_name}. Reasoning models use fixed temperature."
+    # Reasoning models: teplotu nevalidujeme zde, používá se pevná hodnota 1.0
     
     # Validate max_tokens
     if max_tokens:

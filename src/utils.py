@@ -11,6 +11,7 @@ import datetime
 from typing import Any, Dict, List
 import streamlit as st
 from langchain_core.callbacks import BaseCallbackHandler
+from .mcp_client import create_multi_server_config
 
 
 def run_async(coro):
@@ -44,16 +45,17 @@ def run_async(coro):
                 # Create new event loop in thread
                 return _run_with_timeout_and_new_loop(coro, timeout=600.0)
                 
-    except (RuntimeError, asyncio.TimeoutError) as e:
-        # Handle specific timeout and context errors
-        if "TimeoutError" in str(type(e).__name__) or "timeout" in str(e).lower():
-            raise TimeoutError("Operation timed out after 10 minutes") from e
-        else:
-            # Context conflict - use alternative approach
+    except asyncio.TimeoutError as e:
+        # Explicit timeout
+        raise TimeoutError("Operation timed out after 10 minutes") from e
+    except RuntimeError as e:
+        # Only fallback on context conflict errors, do not reuse coroutine otherwise
+        err_msg = str(e).lower()
+        if "cannot enter context" in err_msg or "already entered" in err_msg:
             return _run_with_timeout_and_new_loop(coro, timeout=600.0)
-    except Exception as e:
-        # Fallback: always use new thread
-        return _run_with_timeout_and_new_loop(coro, timeout=600.0)
+        # Propagate other runtime errors
+        raise
+    # No generic except: propagate unexpected exceptions to avoid reusing coroutine
 
 
 def _run_with_timeout_and_new_loop(coro, timeout: float = 600.0):
@@ -119,8 +121,11 @@ def initialize_session_state():
     if 'checkpointer' not in st.session_state:
         st.session_state.checkpointer = None
     
-    if 'servers' not in st.session_state:
-        st.session_state.servers = {}
+    # Initialize default MCP servers (GA4 on 8000 and Google Ads on 8001)
+    if 'servers' not in st.session_state or not st.session_state.servers:
+        st.session_state.servers = create_multi_server_config(
+            {'ga4': 'http://localhost:8000', 'google_ads': 'http://localhost:8001'}
+        )
     
     # Initialize streaming setting
     if 'enable_streaming' not in st.session_state:
@@ -236,6 +241,9 @@ def is_valid_thread_id(thread_id: str) -> bool:
 def format_error_message(error: Exception) -> str:
     """Format error message for display."""
     error_msg = str(error)
+    # Handle TaskGroup errors (multiple concurrent task failures)
+    if "TaskGroup" in error_msg:
+        return "One or more MCP servers failed concurrently when retrieving tools. Check server connectivity and URLs."
     
     # Handle common MCP/SSE errors
     if "cannot enter context" in error_msg or "already entered" in error_msg:
@@ -475,7 +483,7 @@ def run_streaming_async(async_gen_func):
         
         if loop is None:
             # No event loop running - create one and run the generator
-            return asyncio.run(run_async_generator(async_gen_func))
+            return asyncio.run(run_async_generator(async_gen_func()))
         else:
             # We're in an async context - use a new thread
             import concurrent.futures
@@ -489,7 +497,7 @@ def run_streaming_async(async_gen_func):
                 try:
                     new_loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(new_loop)
-                    result = new_loop.run_until_complete(run_async_generator(async_gen_func))
+                    result = new_loop.run_until_complete(run_async_generator(async_gen_func()))
                     new_loop.close()
                 except Exception as e:
                     exception = e

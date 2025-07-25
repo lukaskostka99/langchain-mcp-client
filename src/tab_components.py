@@ -409,6 +409,10 @@ def process_user_message(user_input: str):
 
 def process_streaming_response(user_input: str):
     """Process user message with enhanced streaming using st.status and st.write_stream with reasoning detection."""
+    # Inject selected GA4 property into user_input if present
+    selected_prop = st.session_state.get('selected_ga4_property')
+    if selected_prop:
+        user_input = f"[Default GA4 property: {selected_prop}] " + user_input
     # Track response timing
     start_time = time.time()
     
@@ -707,6 +711,10 @@ def process_streaming_response(user_input: str):
 
 def process_non_streaming_response(user_input: str):
     """Process user message with non-streaming response (original implementation) with reasoning detection."""
+    # Inject selected GA4 property into user_input if present
+    selected_prop = st.session_state.get('selected_ga4_property')
+    if selected_prop:
+        user_input = f"[Default GA4 property: {selected_prop}] " + user_input
     # Track response timing
     start_time = time.time()
     

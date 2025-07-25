@@ -13,3 +13,4 @@ langchain-ollama==0.3.3
 ollama>=0.4.8
 jsonpointer==3.0.0
 aiohttp==3.12.13
+python-dotenv>=0.21.0

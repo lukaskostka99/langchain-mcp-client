@@ -7,6 +7,9 @@ This refactored version uses modular components for better maintainability.
 
 import streamlit as st
 import nest_asyncio
+import os
+from dotenv import load_dotenv
+load_dotenv()
 
 # Apply nest_asyncio to allow nested asyncio event loops (needed for Streamlit's execution model)
 nest_asyncio.apply()

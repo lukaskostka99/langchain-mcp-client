@@ -33,6 +33,9 @@ def create_single_server_config(server_url: str, timeout: int = 600, sse_read_ti
     Returns:
         Server configuration dictionary
     """
+    # Ensure URL points to SSE endpoint
+    if not server_url.endswith("/sse"):
+        server_url = server_url.rstrip("/") + "/sse"
     return {
         "default_server": {
             "transport": "sse",
@@ -58,6 +61,9 @@ def create_multi_server_config(servers: Dict[str, str], timeout: int = 600, sse_
     """
     config = {}
     for name, url in servers.items():
+        # Ensure URL points to SSE endpoint
+        if not url.endswith("/sse"):
+            url = url.rstrip("/") + "/sse"
         config[name] = {
             "transport": "sse",
             "url": url,

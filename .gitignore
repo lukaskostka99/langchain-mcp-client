@@ -41,3 +41,10 @@ Thumbs.db
 
 # Database
 conversations.db
+
+# Environment variables
+.env
+
+# Google Cloud credentials (sensitive data)
+google_ads_sa.json
+googlecloudid.json

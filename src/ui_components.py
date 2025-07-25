@@ -11,6 +11,10 @@ import datetime
 import traceback
 import aiohttp
 from typing import Dict, List, Optional, Tuple
+import os
+import subprocess
+import socket
+import sys
 
 from .database import PersistentStorageManager
 from .llm_providers import (
@@ -21,7 +25,7 @@ from .mcp_client import (
     setup_mcp_client, get_tools_from_client, create_single_server_config,
     create_multi_server_config
 )
-from .agent_manager import create_agent_with_tools
+from .agent_manager import create_agent_with_tools, run_tool
 from .utils import run_async, reset_connection_state, safe_async_call, format_error_message, model_supports_tools, create_download_data
 from .llm_providers import is_openai_reasoning_model, supports_streaming_for_reasoning_model
 
@@ -179,12 +183,17 @@ def render_ollama_configuration() -> Dict:
 
 def render_standard_llm_configuration(llm_provider: str) -> Dict:
     """Render standard LLM configuration for non-Ollama providers."""
-    # API Key input
-    api_key = st.text_input(
-        f"{llm_provider} API Key",
-        type="password",
-        help=f"Enter your {llm_provider} API Key"
-    )
+    # API Key input (loaded from .env if available)
+    env_key = os.getenv(f"{llm_provider.upper()}_API_KEY")
+    if env_key:
+        st.info("🔑 API Key loaded from .env")
+        api_key = env_key
+    else:
+        api_key = st.text_input(
+            f"{llm_provider} API Key",
+            type="password",
+            help=f"Enter your {llm_provider} API Key"
+        )
     
     # Store API key in session state for Config tab
     st.session_state.api_key = api_key
@@ -461,34 +470,173 @@ def render_persistent_storage_actions():
                     st.error("Failed to export conversation")
 
 
-def render_server_configuration(llm_config: Dict, memory_config: Dict) -> Dict:
-    """Render MCP server configuration section."""
-    st.header("MCP Server Configuration")
-    
-    server_mode = st.radio(
-        "Server Mode",
-        options=["Single Server", "Multiple Servers", "No MCP Server (Chat Only)"],
-        index=0,
-        on_change=lambda: setattr(st.session_state, "current_tab", server_mode)
-    )
-    
-    if server_mode == "Single Server":
-        return render_single_server_config(llm_config, memory_config)
-    elif server_mode == "Multiple Servers":
-        return render_multiple_servers_config(llm_config, memory_config)
-    else:  # Chat-only mode
-        return render_chat_only_config(llm_config, memory_config)
+def render_server_configuration(llm_config: Dict, memory_config: Dict) -> None:
+    # Auto-connect to MCP servers on first render
+    if 'mcp_auto_connected' not in st.session_state:
+        st.session_state['mcp_auto_connected'] = True
+        handle_multiple_servers_connection(llm_config, memory_config)
+    # Connect to MCP Servers (fallback)
+    if st.sidebar.button("🔗 Connect to MCP Servers"):
+        handle_multiple_servers_connection(llm_config, memory_config)
+    # Google Analytics 4 Configuration
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🔌 Google Analytics 4")
+    # Load GA4 Accounts
+    if st.sidebar.button("🔄 Load GA4 Accounts"):
+        tool = next((t for t in st.session_state.tools if getattr(t, 'name', '')=='get_account_summaries'), None)
+        if tool:
+            pages = safe_async_call(run_tool(tool), 'Failed to load GA4 accounts', timeout=60.0) or []
+            st.session_state['ga4_accounts'] = [
+                f"{p.get('displayName','')} ({p.get('name','').split('/')[-1]})"
+                for p in pages if isinstance(p, dict)
+            ]
+    # Select GA4 Account & Properties
+    if st.session_state.get('ga4_accounts'):
+        selected = st.sidebar.selectbox(
+            'Select GA4 Account',
+            st.session_state['ga4_accounts'],
+            key='selected_ga4_account'
+        )
+        if st.sidebar.button("🔄 Load GA4 Properties") and selected:
+            acct_id = selected.split('(')[-1].rstrip(')')
+            pages = safe_async_call(run_tool(tool), 'Failed to load GA4 properties', timeout=60.0) or []
+            props = []
+            for summary in pages:
+                if isinstance(summary, dict) and summary.get('name','').split('/')[-1]==acct_id:
+                    for prop in summary.get('propertySummaries') or []:
+                        if isinstance(prop, dict):
+                            props.append(
+                                f"{prop.get('displayName','')} ({prop.get('property','').split('/')[-1]})"
+                            )
+            st.session_state['ga4_properties'] = props
+    if st.session_state.get('ga4_properties'):
+        st.sidebar.selectbox(
+            'Select GA4 Property',
+            st.session_state['ga4_properties'],
+            key='selected_ga4_property'
+        )
 
+    # Google Ads Configuration
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🔌 Google Ads")
+    if st.sidebar.button("🔄 Load Google Ads Accounts"):
+        tool2 = next((t for t in st.session_state.tools if getattr(t, 'name', '')=='list_accounts'), None)
+        if tool2:
+            raw = safe_async_call(run_tool(tool2), 'Failed to load Ads accounts', timeout=60.0) or ''
+            st.session_state['ads_accounts'] = [
+                line.replace('Account:','').strip()
+                for line in raw.splitlines() if line.startswith('Account:')
+            ]
+    if st.session_state.get('ads_accounts'):
+        st.sidebar.selectbox(
+            'Select Google Ads Account',
+            st.session_state['ads_accounts'],
+            key='selected_ads_account'
+        )
+    return
+
+def render_local_ga_server_config(llm_config: Dict, memory_config: Dict) -> Dict:
+    """Renders the configuration for the local Google Analytics server."""
+    # Initialize GA4 loaded flag and properties list on first render
+    if 'ga4_loaded' not in st.session_state:
+        st.session_state['ga4_loaded'] = False
+        st.session_state['ga4_properties'] = []
+    # Clear selected property if not loaded
+    if not st.session_state['ga4_loaded'] and 'selected_ga4_property' in st.session_state:
+        del st.session_state['selected_ga4_property']
+    st.sidebar.info("Connect to the bundled Google Analytics MCP Server.")
+    config = {"mode": "ga4", "connected": False}
+    # Tlačítko pro spuštění a připojení
+    if st.sidebar.button("🚀 Launch & Connect GA Server"):
+        with st.spinner("Launching Google Analytics MCP Server..."):
+            import subprocess, time, sys
+            server_process_key = "ga_server_process"
+            if server_process_key in st.session_state and st.session_state[server_process_key].poll() is None:
+                st.sidebar.warning("GA Server is already running.")
+            else:
+                try:
+                    process = subprocess.Popen([sys.executable, "run_ga_mcp.py"])
+                    st.session_state[server_process_key] = process
+                    st.sidebar.success(f"GA Server started with PID: {process.pid}")
+                    time.sleep(3)
+                except Exception as e:
+                    st.sidebar.error(f"Failed to start GA server: {e}")
+                    return config
+        # Po spuštění se připojíme
+        server_url = "http://localhost:8000/sse"
+        st.sidebar.success(f"Connecting to GA Server at `{server_url}`")
+        config = handle_single_server_connection(llm_config, memory_config, server_url)
+    # Po úspěšném připojení (tools načteny) nabídneme výběr property
+    if st.session_state.get('tools'):
+        # Najdeme tool pro seznam účtů
+        info_tool = next((t for t in st.session_state.tools if getattr(t, 'name', '') == 'get_account_summaries'), None)
+        if info_tool:
+            if st.sidebar.button("🔄 Load GA4 Properties", key="load_ga_props"):
+                # Získáme seznam AccountSummary objektů
+                pages = safe_async_call(
+                    run_tool(info_tool),
+                    "Failed to load GA4 properties",
+                    timeout=60.0
+                ) or []
+                # Ověříme, že pages je list
+                if not isinstance(pages, list):
+                    pages = []
+                # Převod stringů na dict, pokud je třeba
+                parsed_pages = []
+                for page in pages:
+                    if isinstance(page, str):
+                        try:
+                            d = json.loads(page)
+                        except Exception:
+                            continue
+                    elif isinstance(page, dict):
+                        d = page
+                    else:
+                        continue
+                    parsed_pages.append(d)
+                # Flatten jednotlivé AccountSummary do propertySummaries
+                flat_props = []
+                for summary in parsed_pages:
+                    # Získání údajů o účtu
+                    account_id = summary.get('account') or summary.get('name', '')
+                    account_display = summary.get('displayName') or summary.get('display_name', '')
+                    prop_list = summary.get('propertySummaries') or summary.get('property_summaries') or []
+                    if not isinstance(prop_list, list):
+                        continue
+                    for prop in prop_list:
+                        if not isinstance(prop, dict):
+                            continue
+                        prop_id = prop.get('property') or prop.get('name', '')
+                        prop_display = prop.get('displayName') or prop.get('display_name', '')
+                        flat_props.append({
+                            'account': account_id,
+                            'accountDisplayName': account_display,
+                            'property': prop_id,
+                            'propertyDisplayName': prop_display
+                        })
+                st.session_state['ga4_properties'] = flat_props
+                st.session_state['ga4_loaded'] = True
+            # Pokud máme flattenované GA4 properties, nabídneme dropdown
+            flat_props = st.session_state.get('ga4_properties', []) if isinstance(st.session_state.get('ga4_properties'), list) else []
+            if flat_props:
+                # Dropdown pro výběr GA4 vlastnosti
+                selected_summary = st.sidebar.selectbox(
+                    "Select GA4 Property",
+                    options=flat_props,
+                    format_func=lambda p: f"{p.get('accountDisplayName','')} / {p.get('propertyDisplayName','')} ({p.get('property','')})",
+                    key="selected_ga4_property"
+                )
+    return config
 
 def render_single_server_config(llm_config: Dict, memory_config: Dict) -> Dict:
-    """Render single server configuration."""
-    server_url = st.text_input(
+    """Renders the configuration for a single MCP server."""
+    server_url = st.sidebar.text_input(
         "MCP Server URL",
         value="http://localhost:8000/sse",
         help="Enter the URL of your MCP server (SSE endpoint)"
     )
     
-    if st.button("Connect to MCP Server", type="primary"):
+    if st.sidebar.button("Connect to MCP Server", type="primary"):
         return handle_single_server_connection(llm_config, memory_config, server_url)
     
     return {"mode": "single", "connected": False}
@@ -674,6 +822,22 @@ def handle_multiple_servers_connection(llm_config: Dict, memory_config: Dict) ->
         return {"mode": "multiple", "connected": False}
     
     with st.spinner("Connecting to MCP servers..."):
+        # Spustíme lokální MCP servery, pokud ještě neběží
+        if not st.session_state.get('mcp_servers_started', False):
+            # GA4 server na portu 8000
+            if not _port_in_use(8000):
+                subprocess.Popen([
+                    sys.executable,
+                    os.path.join(os.getcwd(), 'run_ga_mcp.py')
+                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # Google Ads server na portu 8001
+            if not _port_in_use(8001):
+                subprocess.Popen([
+                    sys.executable,
+                    os.path.join(os.getcwd(), 'run_ads_mcp.py')
+                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            st.session_state['mcp_servers_started'] = True
+
         try:
             # Initialize the MCP client with all servers with context isolation
             client = safe_async_call(
@@ -1031,3 +1195,12 @@ def render_tool_parameters(tool):
 
         # Display parameter info
         st.code(" ".join(param_desc)) 
+
+def _port_in_use(port: int) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.5)
+            s.connect(("localhost", port))
+            return True
+    except Exception:
+        return False 
